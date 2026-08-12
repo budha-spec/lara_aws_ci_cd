@@ -11,59 +11,59 @@ jobs:
     uses: ./.github/workflows/terraform.yml
     secrets: inherit
 
-    deploy:
-      needs: terraform
-      runs-on: ubuntu-latest
+  deploy:
+    needs: terraform
+    runs-on: ubuntu-latest
 
-      steps:
+    steps:
 
-        - name: Checkout Repository
-          uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-        - name: Configure AWS Credentials
-          uses: aws-actions/configure-aws-credentials@v4
-          with:
-            aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-            aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-            aws-region: ${{ secrets.AWS_REGION }}
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
-        - name: Setup PHP and disable mbstring
-          uses: shivammathur/setup-php@v2
-          with:
-            php-version: '8.2'
-            extensions: mbstring, dom, curl, libxml, zip, pcntl, pdo, pdo_mysql, fileinfo
-            tools: composer:v2
+      - name: Setup PHP and disable mbstring
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mbstring, dom, curl, libxml, zip, pcntl, pdo, pdo_mysql, fileinfo
+          tools: composer:v2
 
-        - name: Install Composer dependencies
-          run: composer install --prefer-dist --no-interaction --no-progress --non-destructive
-        
-        - name: Use Node.js 20
-          uses: actions/setup-node@v4
-          with:
-            node-version: '20'
-
-        - name: Install Node dependencies
-          run: npm ci
-
-        - name: Build node dependencies
-          run: npm run build
+      - name: Install Composer dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress --non-destructive
       
-        - name: Generate deployment package
-          run: |
-            zip -r deploy.zip . \
-              -x ".git/*" \
-              -x ".github/*" \
-              -x "terraform/*" \
-              -x "node_modules/*" \
-              -x "tests/*"
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
-        - name: Deploy to EB
-          uses: einaregilsson/beanstalk-deploy@v22
-          with:
-            aws_access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
-            aws_secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-            application_name: Laravel App
-            environment_name: laravel-app-prod-env
-            version_label: ${{ github.sha}}
-            region: ${{ secrets.AWS_REGION }}
-            deployment_package: deploy.zip
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Build node dependencies
+        run: npm run build
+    
+      - name: Generate deployment package
+        run: |
+          zip -r deploy.zip . \
+            -x ".git/*" \
+            -x ".github/*" \
+            -x "terraform/*" \
+            -x "node_modules/*" \
+            -x "tests/*"
+
+      - name: Deploy to EB
+        uses: einaregilsson/beanstalk-deploy@v22
+        with:
+          aws_access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          application_name: Laravel App
+          environment_name: laravel-app-prod-env
+          version_label: ${{ github.sha}}
+          region: ${{ secrets.AWS_REGION }}
+          deployment_package: deploy.zip
