@@ -28,7 +28,7 @@ jobs:
 
     - name: Create backend bucket if missing
       run: |
-            aws s3api head-bucket --bucket laravel-app-prod-storage 2>/dev/null || \
+            aws s3api head-bucket --bucket lara-aws-prod 2>/dev/null || \
             aws s3 mb s3://lara-aws-prod --region us-east-1
         
     - name: Terraform Init
