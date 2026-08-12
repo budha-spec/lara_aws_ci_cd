@@ -27,5 +27,5 @@ variable "db_username" {
 }
 
 variable "db_password" {
-  default = "LaraTfAws@2026"
+  default = "LaraTfAws#2026"
 }
