@@ -1,11 +1,11 @@
-name: 'Terraform Infrastructure'
+name: Terraform Infrastructure
 
 on:
   workflow_call:
 
 jobs:
   terraform:
-    name: 'Terraform'
+    name: Terraform
     runs-on: ubuntu-latest
 
     defaults:
@@ -13,7 +13,6 @@ jobs:
         working-directory: terraform
 
     steps:
-    
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -25,13 +24,13 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
+          aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Create backend bucket if missing
         run: |
-              aws s3api head-bucket --bucket lara-aws-prod 2>/dev/null || \
-              aws s3 mb s3://lara-aws-prod --region us-east-1
-          
+          aws s3api head-bucket --bucket lara-aws-prod 2>/dev/null || \
+          aws s3 mb s3://lara-aws-prod --region us-east-1
+
       - name: Terraform Init
         run: terraform init
 
