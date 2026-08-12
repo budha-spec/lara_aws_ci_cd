@@ -10,7 +10,7 @@ data "aws_elastic_beanstalk_solution_stack" "php" {
 resource "aws_elastic_beanstalk_environment" "eb_env" {
     name                = "${var.tag_name}-env"
     application         = aws_elastic_beanstalk_application.laravel.name
-    solution_stack_name = data.aws_elastic_beanstalk_solution_stack.php
+    solution_stack_name = data.aws_elastic_beanstalk_solution_stack.php.name
     
     setting {
         namespace = "aws:autoscaling:launchconfiguration"
