@@ -1,5 +1,5 @@
 resource "aws_iam_role" "eb_role" {
-    name = "${local.name}-eb-role"
+    name = "aws-elasticbeanstalk-lara-app-prod-eb-role"
     assume_role_policy = jsonencode({
         Version="2012-10-17"
         Statement=[{
