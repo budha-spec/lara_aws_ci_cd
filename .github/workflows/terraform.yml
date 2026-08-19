@@ -28,8 +28,8 @@ jobs:
 
       - name: Create backend bucket if missing
         run: |
-          aws s3api head-bucket --bucket lara-aws-prod 2>/dev/null || \
-          aws s3 mb s3://lara-aws-prod --region us-east-1
+          aws s3api head-bucket --bucket lara-aws-tf-prod 2>/dev/null || \
+          aws s3 mb s3://lara-aws-tf-prod --region us-east-1
 
       - name: Terraform Init
         run: terraform init
