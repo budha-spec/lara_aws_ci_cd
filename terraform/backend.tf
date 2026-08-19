@@ -2,7 +2,7 @@ terraform {
 
   backend "s3" {
 
-    bucket = "lara-app-prod-storage"
+    bucket = "lara-aws-prod"
 
     key = "terraform/state.tfstate"
 
