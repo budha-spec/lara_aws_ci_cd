@@ -1,5 +1,5 @@
 resource "aws_elastic_beanstalk_application" "laravel" {
-    name = "${local.name}-prod"
+    name = local.name
 }
 
 
@@ -9,7 +9,7 @@ data "aws_elastic_beanstalk_solution_stack" "php" {
 }
 
 resource "aws_elastic_beanstalk_environment" "prod" {
-    name = "${local.name}-prod-env"
+    name = "${local.name}-env"
     application = aws_elastic_beanstalk_application.laravel.name
     solution_stack_name = data.aws_elastic_beanstalk_solution_stack.php.name
     
