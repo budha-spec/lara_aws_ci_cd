@@ -60,6 +60,7 @@ jobs:
             -x "terraform/*" \
             -x "node_modules/*" \
             -x "tests/*"
+            -x "vendor/*"
 
       - name: Deploy to EB
         uses: einaregilsson/beanstalk-deploy@v22
