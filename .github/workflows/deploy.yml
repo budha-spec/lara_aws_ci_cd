@@ -56,7 +56,8 @@ jobs:
             -x ".github/*" \
             -x "terraform/*" \
             -x "node_modules/*" \
-            -x "tests/*"
+            -x "tests/*" \
+            -x "vendor/*"
 
       - name: Deploy to Elastic Beanstalk
         uses: einaregilsson/beanstalk-deploy@v22
