@@ -3,7 +3,7 @@ variable "aws_region" {
 }
 
 variable "project_name" {
-  default = "lara-app"
+  default = "lara-aws-tf"
 }
 
 variable "domain_name" {
