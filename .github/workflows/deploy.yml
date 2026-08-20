@@ -1,13 +1,9 @@
-name: Deploy to elastic beanstalk
+name: Deploy Laravel to Elastic Beanstalk
 
 on:
   push:
     branches:
       - main
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
 
@@ -17,6 +13,7 @@ jobs:
 
   deploy:
     needs: terraform
+
     runs-on: ubuntu-latest
 
     steps:
@@ -27,21 +24,21 @@ jobs:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
+          aws-region: ${{ secrets.AWS_REGION }}
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Setup PHP and disable mbstring
+      - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.2'
-          extensions: mbstring, dom, curl, libxml, zip, pcntl, pdo, pdo_mysql, fileinfo
+          php-version: "8.3"
+          extensions: mbstring, pdo_mysql, bcmath, ctype, fileinfo, json, openssl, tokenizer, xml
           tools: composer:v2
 
-      - name: Install Composer dependencies
+      - name: Install Composer Dependencies
         run: composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction
-      
-      - name: Use Node.js 20
+
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -49,27 +46,26 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
-      - name: Build node dependencies
+      - name: Build Vite assets
         run: npm run build
-    
-      - name: Generate deployment package
+
+      - name: Build Deployment Package
         run: |
           zip -r deploy.zip . \
             -x ".git/*" \
             -x ".github/*" \
             -x "terraform/*" \
             -x "node_modules/*" \
-            -x "tests/*" \
-            -x "vendor/*"
+            -x "tests/*"
 
-      - name: Deploy to EB
+      - name: Deploy to Elastic Beanstalk
         uses: einaregilsson/beanstalk-deploy@v22
         with:
           aws_access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws_secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           application_name: lara-aws-tf-prod
           environment_name: lara-aws-tf-prod-env
-          version_label: ${{ github.sha }}
           region: ${{ secrets.AWS_REGION }}
+          version_label: ${{ github.sha }}
           deployment_package: deploy.zip
           wait_for_deployment: true
