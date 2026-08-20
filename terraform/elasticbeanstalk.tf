@@ -12,6 +12,12 @@ resource "aws_elastic_beanstalk_environment" "prod" {
     name = "${local.name}-env"
     application = aws_elastic_beanstalk_application.laravel.name
     solution_stack_name = data.aws_elastic_beanstalk_solution_stack.php.name
+
+    lifecycle {
+        ignore_changes = [
+        version_label
+        ]
+    }
     
     setting {
         namespace = "aws:autoscaling:launchconfiguration"
