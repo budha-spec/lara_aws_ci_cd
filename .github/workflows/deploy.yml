@@ -10,14 +10,21 @@ permissions:
   contents: read
 
 jobs:
+
+  terraform:
+    uses: ./.github/workflows/terraform.yml
+    secrets: inherit
+
   deploy:
     runs-on: ubuntu-latest
+    needs: terraform
 
     env:
       AWS_REGION: ap-south-1
       ECR_REPOSITORY: my-laravel-app
       EB_APPLICATION: lara-aws-tf
       EB_ENVIRONMENT: lara-aws-tf-env
+      EB_S3_BUCKET: lara-aws-tf-prod
 
     steps:
 
@@ -64,3 +71,32 @@ jobs:
             ]
           }
           EOF
+
+      - name: Create deployment package
+        run: |
+          zip deploy.zip Dockerrun.aws.json
+
+      - name: Upload deployment package to S3
+        run: |
+          aws s3 cp \
+            deploy.zip \
+            s3://${EB_S3_BUCKET}/deployments/${IMAGE_TAG}.zip
+
+      - name: Create Elastic Beanstalk application version
+        run: |
+          aws elasticbeanstalk create-application-version \
+            --application-name "$EB_APPLICATION" \
+            --version-label "$IMAGE_TAG" \
+            --source-bundle \
+              S3Bucket="$EB_S3_BUCKET",S3Key="deployments/${IMAGE_TAG}.zip"
+
+      - name: Deploy to Elastic Beanstalk
+        run: |
+          aws elasticbeanstalk update-environment \
+            --environment-name "$EB_ENVIRONMENT" \
+            --version-label "$IMAGE_TAG"
+
+      - name: Wait for deployment
+        run: |
+          aws elasticbeanstalk wait environment-updated \
+            --environment-name "$EB_ENVIRONMENT"
