@@ -1,72 +1,66 @@
-name: Deploy Laravel to Elastic Beanstalk
+name: Deploy Laravel
 
 on:
   push:
     branches:
       - main
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
-
-  terraform:
-    uses: ./.github/workflows/terraform.yml
-    secrets: inherit
-
   deploy:
-    needs: terraform
-
     runs-on: ubuntu-latest
+
+    env:
+      AWS_REGION: ap-south-1
+      ECR_REPOSITORY: my-laravel-app
+      EB_APPLICATION: lara-aws-tf
+      EB_ENVIRONMENT: lara-aws-tf-env
 
     steps:
 
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-region: ${{ secrets.AWS_REGION }}
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Setup PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: "8.3"
-          extensions: mbstring, pdo_mysql, bcmath, ctype, fileinfo, json, openssl, tokenizer, xml
-          tools: composer:v2
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Install Composer Dependencies
-        run: composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Install Node dependencies
-        run: npm ci
-
-      - name: Build Vite assets
-        run: npm run build
-
-      - name: Build Deployment Package
+      - name: Set image tag
         run: |
-          zip -r deploy.zip . \
-            -x ".git/*" \
-            -x ".github/*" \
-            -x "terraform/*" \
-            -x "node_modules/*" \
-            -x "tests/*" \
-            -x "vendor/*"
+          echo "IMAGE_TAG=${GITHUB_SHA}" >> $GITHUB_ENV
 
-      - name: Deploy to Elastic Beanstalk
-        uses: einaregilsson/beanstalk-deploy@v22
-        with:
-          aws_access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws_secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          application_name: lara-aws-tf-prod
-          environment_name: lara-aws-tf-prod-env
-          region: ${{ secrets.AWS_REGION }}
-          version_label: ${{ github.sha }}
-          deployment_package: deploy.zip
-          wait_for_deployment: true
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t ${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG} .
+
+      - name: Push Docker image
+        run: |
+          docker push \
+            ${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}
+
+      - name: Create Dockerrun
+        run: |
+          cat > Dockerrun.aws.json <<EOF
+          {
+            "AWSEBDockerrunVersion": "1",
+            "Image": {
+              "Name": "${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}",
+              "Update": "true"
+            },
+            "Ports": [
+              {
+                "ContainerPort": "80"
+              }
+            ]
+          }
+          EOF

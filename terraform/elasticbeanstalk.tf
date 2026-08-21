@@ -86,6 +86,12 @@ resource "aws_elastic_beanstalk_environment" "prod" {
         value     = "production"
     }
 
+     setting {
+        namespace = "aws:elasticbeanstalk:application:environment"
+        name      = "APP_DEBUG"
+        value     = "false"
+    }
+
     setting {
         namespace = "aws:elasticbeanstalk:application:environment"
         name      = "APP_KEY"
