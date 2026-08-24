@@ -45,16 +45,12 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 COPY composer.json composer.lock ./
 COPY . .
 
-RUN for i in 1 2 3 4 5; do \
-        composer install \
-            --no-dev \
-            --prefer-dist \
-            --optimize-autoloader \
-            --no-interaction \
-            --no-progress && break; \
-        echo "Composer install failed. Retrying ($i/5)..."; \
-        sleep 10; \
-    done
+RUN composer install \
+    --no-dev \
+    --prefer-dist \
+    --optimize-autoloader \
+    --no-interaction \
+    --no-progress
 
 COPY --from=frontend /app/public/build ./public/build
 
