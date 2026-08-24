@@ -28,9 +28,15 @@ jobs:
 
     steps:
 
+      # ----------------------------------------
+      # Checkout
+      # ----------------------------------------
       - name: Checkout
         uses: actions/checkout@v4
 
+      # ----------------------------------------
+      # AWS credentials
+      # ----------------------------------------
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -38,24 +44,146 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      # ----------------------------------------
+      # Login to ECR
+      # ----------------------------------------
       - name: Login to ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      # ----------------------------------------
+      # Image tag
+      # ----------------------------------------
       - name: Set image tag
         run: |
           echo "IMAGE_TAG=${GITHUB_SHA}" >> $GITHUB_ENV
 
+      # ----------------------------------------
+      # Build Docker image
+      # ----------------------------------------
       - name: Build Docker image
         run: |
           docker build \
-            -t ${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG} .
+            -t "${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}" .
 
+      # ==================================================
+      # IMPORTANT: Inspect image BEFORE pushing to ECR
+      # ==================================================
+
+      - name: Inspect Docker image
+        run: |
+          IMAGE="${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+
+          echo "======================================"
+          echo "IMAGE"
+          echo "======================================"
+          echo "$IMAGE"
+
+          echo "======================================"
+          echo "PUBLIC DIRECTORY"
+          echo "======================================"
+
+          docker run --rm "$IMAGE" \
+            sh -c 'ls -la /var/www/html/public'
+
+          echo "======================================"
+          echo "INDEX.PHP"
+          echo "======================================"
+
+          docker run --rm "$IMAGE" \
+            sh -c 'ls -la /var/www/html/public/index.php'
+
+          echo "======================================"
+          echo "NGINX CONFIG"
+          echo "======================================"
+
+          docker run --rm "$IMAGE" nginx -T
+
+      # ==================================================
+      # IMPORTANT: Test container locally
+      # ==================================================
+
+      - name: Test Docker container
+        run: |
+          IMAGE="${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+
+          docker run -d \
+            --name laravel-test \
+            -p 8080:80 \
+            "$IMAGE"
+
+          echo "Waiting for container..."
+          sleep 10
+
+          echo "======================================"
+          echo "DOCKER PS"
+          echo "======================================"
+
+          docker ps -a
+
+          echo "======================================"
+          echo "CONTAINER LOGS"
+          echo "======================================"
+
+          docker logs laravel-test
+
+          echo "======================================"
+          echo "TEST HTTP"
+          echo "======================================"
+
+          curl -v http://localhost:8080/ || true
+
+          echo "======================================"
+          echo "INSIDE CONTAINER"
+          echo "======================================"
+
+          docker exec laravel-test \
+            sh -c 'ls -la /var/www/html'
+
+          docker exec laravel-test \
+            sh -c 'ls -la /var/www/html/public'
+
+          echo "======================================"
+          echo "INDEX.PHP"
+          echo "======================================"
+
+          docker exec laravel-test \
+            sh -c 'ls -la /var/www/html/public/index.php'
+
+          echo "======================================"
+          echo "NGINX CONFIG"
+          echo "======================================"
+
+          docker exec laravel-test nginx -T
+
+          echo "======================================"
+          echo "PHP-FPM"
+          echo "======================================"
+
+          docker exec laravel-test \
+            sh -c 'ps aux | grep php-fpm || true'
+
+          echo "======================================"
+          echo "NGINX"
+          echo "======================================"
+
+          docker exec laravel-test \
+            sh -c 'ps aux | grep nginx || true'
+
+          docker stop laravel-test
+          docker rm laravel-test
+
+      # ----------------------------------------
+      # Push image to ECR
+      # ----------------------------------------
       - name: Push Docker image
         run: |
           docker push \
-            ${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}
+            "${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}"
 
+      # ----------------------------------------
+      # Create Dockerrun
+      # ----------------------------------------
       - name: Create Dockerrun
         run: |
           cat > Dockerrun.aws.json <<EOF
@@ -73,18 +201,31 @@ jobs:
           }
           EOF
 
+          echo "======================================"
+          echo "DOCKERRUN"
+          echo "======================================"
+
+          cat Dockerrun.aws.json
+
+      # ----------------------------------------
+      # Create deployment package
+      # ----------------------------------------
       - name: Create deployment package
         run: |
-          zip -r deploy.zip \
-            Dockerrun.aws.json \
-            .ebextensions
+          zip deploy.zip Dockerrun.aws.json
 
+      # ----------------------------------------
+      # Upload to S3
+      # ----------------------------------------
       - name: Upload deployment package to S3
         run: |
           aws s3 cp \
             deploy.zip \
             s3://${EB_S3_BUCKET}/deployments/${IMAGE_TAG}.zip
 
+      # ----------------------------------------
+      # Create EB application version
+      # ----------------------------------------
       - name: Create Elastic Beanstalk application version
         run: |
           aws elasticbeanstalk create-application-version \
@@ -93,12 +234,18 @@ jobs:
             --source-bundle \
               S3Bucket="$EB_S3_BUCKET",S3Key="deployments/${IMAGE_TAG}.zip"
 
+      # ----------------------------------------
+      # Deploy
+      # ----------------------------------------
       - name: Deploy to Elastic Beanstalk
         run: |
           aws elasticbeanstalk update-environment \
             --environment-name "$EB_ENVIRONMENT" \
             --version-label "$IMAGE_TAG"
 
+      # ----------------------------------------
+      # Wait
+      # ----------------------------------------
       - name: Wait for deployment
         run: |
           aws elasticbeanstalk wait environment-updated \
