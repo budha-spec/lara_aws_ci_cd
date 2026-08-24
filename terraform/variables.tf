@@ -24,8 +24,9 @@ variable "vpc_cidr" {
 }
 
 variable "app_key" {
-  default = "base64:0s5p7nczkMhfTLIpbBmBtz1Cd8xbO6fKwQafd0z65ek="
-  sensitive = true
+  description = "Laravel application encryption key"
+  type        = string
+  sensitive   = true
 }
 
 variable "create_bucket" {
