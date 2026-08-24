@@ -31,21 +31,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: OIDC Debugger
-        uses: github/actions-oidc-debugger@main
-
-      - name: Debug Dockerfile
-        run: |
-          echo "=== Dockerfiles ==="
-          find . -name 'Dockerfile*' -type f -print
-
-          echo "=== Go references ==="
-          grep -R "apk add.*go\|.go-version" . \
-            --exclude-dir=.git || true
-
-          echo "=== Dockerfile being used ==="
-          sed -n '1,30p' Dockerfile
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
