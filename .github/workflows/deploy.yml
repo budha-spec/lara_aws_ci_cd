@@ -22,8 +22,8 @@ jobs:
     env:
       AWS_REGION: ${{ secrets.AWS_REGION }}
       ECR_REPOSITORY: lara-aws-tf-prod-laravel
-      EB_APPLICATION: lara-aws-tf
-      EB_ENVIRONMENT: lara-aws-tf-env
+      EB_APPLICATION: lara-aws-tf-prod
+      EB_ENVIRONMENT: lara-aws-tf-prod-env
       EB_S3_BUCKET: lara-aws-tf-prod
 
     steps:
