@@ -20,7 +20,7 @@ jobs:
     needs: terraform
 
     env:
-      AWS_REGION: ap-south-1
+      AWS_REGION: ${{ secrets.AWS_REGION }}
       ECR_REPOSITORY: my-laravel-app
       EB_APPLICATION: lara-aws-tf
       EB_ENVIRONMENT: lara-aws-tf-env
