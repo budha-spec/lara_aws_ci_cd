@@ -59,7 +59,9 @@ RUN chown -R www-data:www-data \
         /var/www/html/bootstrap/cache \
     && chmod -R 775 \
         /var/www/html/storage \
-        /var/www/html/bootstrap/cache
+        /var/www/html/bootstrap/cache \
+    && ls -la /var/www/html/public \
+    && ls -la /var/www/html/public/index.php
 
 COPY docker/nginx/default.conf \
     /etc/nginx/sites-available/default
