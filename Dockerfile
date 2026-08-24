@@ -45,12 +45,16 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 COPY composer.json composer.lock ./
 COPY . .
 
-RUN composer install \
-    --no-dev \
-    --prefer-dist \
-    --optimize-autoloader \
-    --no-interaction \
-    --no-progress
+RUN for i in 1 2 3 4 5; do \
+        composer install \
+            --no-dev \
+            --prefer-dist \
+            --optimize-autoloader \
+            --no-interaction \
+            --no-progress && break; \
+        echo "Composer install failed. Retrying ($i/5)..."; \
+        sleep 10; \
+    done
 
 COPY --from=frontend /app/public/build ./public/build
 
@@ -59,15 +63,15 @@ RUN chown -R www-data:www-data \
         /var/www/html/bootstrap/cache \
     && chmod -R 775 \
         /var/www/html/storage \
-        /var/www/html/bootstrap/cache \
-    && ls -la /var/www/html/public \
-    && ls -la /var/www/html/public/index.php
+        /var/www/html/bootstrap/cache
 
 COPY docker/nginx/default.conf \
     /etc/nginx/sites-available/default
 
 COPY docker/supervisor/supervisord.conf \
     /etc/supervisor/conf.d/supervisord.conf
+
+RUN nginx -t
 
 EXPOSE 80
 
