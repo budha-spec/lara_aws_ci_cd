@@ -134,11 +134,22 @@ jobs:
           curl -v http://localhost:8080/ || true
 
           echo "======================================"
-          echo "INSIDE CONTAINER"
+          echo "LARAVEL LOG"
           echo "======================================"
 
           docker exec laravel-test \
-            sh -c 'ls -la /var/www/html'
+            sh -c 'find /var/www/html/storage/logs -type f -maxdepth 1 -print -exec tail -100 {} \;'
+
+          echo "======================================"
+          echo "ENVIRONMENT"
+          echo "======================================"
+
+          docker exec laravel-test \
+            sh -c 'php artisan about || true'
+
+          echo "======================================"
+          echo "PUBLIC DIRECTORY"
+          echo "======================================"
 
           docker exec laravel-test \
             sh -c 'ls -la /var/www/html/public'
@@ -172,7 +183,7 @@ jobs:
 
           docker stop laravel-test
           docker rm laravel-test
-
+          
       # ----------------------------------------
       # Push image to ECR
       # ----------------------------------------
