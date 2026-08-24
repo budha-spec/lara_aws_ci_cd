@@ -75,7 +75,9 @@ jobs:
 
       - name: Create deployment package
         run: |
-          zip deploy.zip Dockerrun.aws.json
+          zip -r deploy.zip \
+            Dockerrun.aws.json \
+            .ebextensions
 
       - name: Upload deployment package to S3
         run: |
