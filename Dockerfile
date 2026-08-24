@@ -48,7 +48,9 @@ RUN composer install \
     --no-dev \
     --prefer-dist \
     --optimize-autoloader \
-    --no-interaction
+    --no-interaction \
+    --no-progress \
+    -vvv
 
 COPY . .
 
