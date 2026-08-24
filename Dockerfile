@@ -60,12 +60,8 @@ RUN chown -R www-data:www-data \
     && chmod -R 775 \
         /var/www/html/storage \
         /var/www/html/bootstrap/cache \
-    && echo "=== PUBLIC DIRECTORY ===" \
     && ls -la /var/www/html/public \
-    && echo "=== INDEX.PHP ===" \
-    && ls -la /var/www/html/public/index.php \
-    && echo "=== NGINX CONFIG ===" \
-    && nginx -t
+    && ls -la /var/www/html/public/index.php
 
 COPY docker/nginx/default.conf \
     /etc/nginx/sites-available/default
