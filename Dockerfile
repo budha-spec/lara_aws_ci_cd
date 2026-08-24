@@ -65,12 +65,19 @@ RUN chown -R www-data:www-data \
         /var/www/html/storage \
         /var/www/html/bootstrap/cache
 
+# Remove default Nginx configuration
+RUN rm -f /etc/nginx/sites-enabled/default \
+    /etc/nginx/sites-available/default
+
+# Copy Laravel Nginx configuration
 COPY docker/nginx/default.conf \
     /etc/nginx/sites-available/default
 
-COPY docker/supervisor/supervisord.conf \
-    /etc/supervisor/conf.d/supervisord.conf
+# Enable Laravel Nginx configuration
+RUN ln -sf /etc/nginx/sites-available/default \
+    /etc/nginx/sites-enabled/default
 
+# Verify Nginx configuration
 RUN nginx -t
 
 EXPOSE 80
