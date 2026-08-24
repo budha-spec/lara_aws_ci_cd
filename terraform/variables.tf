@@ -24,7 +24,7 @@ variable "vpc_cidr" {
 }
 
 variable "app_key" {
-  default = "base64:4Qsmg+HjU5G91rETWAs55GRlIQwjSalYekMEuoa678c="
+  default = "base64:0s5p7nczkMhfTLIpbBmBtz1Cd8xbO6fKwQafd0z65ek="
   sensitive = true
 }
 
