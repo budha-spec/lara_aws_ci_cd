@@ -5,6 +5,7 @@
 *.tfvars
 *.tfvars.json
 crash.log
+*.terraform.lock.hcl
 
 # Laravel
 /vendor/
