@@ -58,9 +58,6 @@ COPY composer.json composer.lock ./
 # Copy Laravel application
 COPY . .
 
-# Never use a config cache generated outside the container
-RUN rm -f bootstrap/cache/config.php
-
 # Install PHP dependencies
 RUN composer install \
     --no-dev \
@@ -68,6 +65,9 @@ RUN composer install \
     --optimize-autoloader \
     --no-interaction \
     --no-progress
+
+# Never use a config cache generated outside the container
+RUN rm -f bootstrap/cache/config.php
 
 # Copy Vite build
 COPY --from=frontend /app/public/build ./public/build
@@ -87,14 +87,14 @@ RUN echo "=== PUBLIC DIRECTORY ===" \
     && ls -la /var/www/html/public/index.php
 
 # Nginx
-RUN rm -f /etc/nginx/sites-enabled/default
+RUN rm -f /etc/nginx/sites-enabled/default \
+          /etc/nginx/sites-available/default
 
-COPY docker/nginx/default.conf \
-    /etc/nginx/sites-available/default
+COPY docker/nginx/default.conf /etc/nginx/conf.d/default.conf
 
-RUN ln -sf \
-    /etc/nginx/sites-available/default \
-    /etc/nginx/sites-enabled/default
+RUN echo "===== NGINX CONFIG =====" \
+    && cat /etc/nginx/conf.d/default.conf \
+    && echo "===== END NGINX CONFIG ====="
 
 # Supervisor
 COPY docker/supervisor/supervisord.conf \
