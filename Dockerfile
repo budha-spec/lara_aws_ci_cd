@@ -49,16 +49,29 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+
 # Composer
+
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
-# Copy Composer files first
+
+# Composer files first
+
 COPY composer.json composer.lock ./
 
-# Copy Laravel application
+
+# Laravel application
+
 COPY . .
 
-# Install PHP dependencies
+
+# Never use config cache generated outside container
+
+RUN rm -f bootstrap/cache/config.php
+
+
+# Install dependencies
+
 RUN composer install \
     --no-dev \
     --prefer-dist \
@@ -66,13 +79,14 @@ RUN composer install \
     --no-interaction \
     --no-progress
 
-# Never use a config cache generated outside the container
-RUN rm -f bootstrap/cache/config.php
 
-# Copy Vite build
+# Vite build
+
 COPY --from=frontend /app/public/build ./public/build
 
+
 # Laravel permissions
+
 RUN chown -R www-data:www-data \
         /var/www/html/storage \
         /var/www/html/bootstrap/cache \
@@ -80,37 +94,47 @@ RUN chown -R www-data:www-data \
         /var/www/html/storage \
         /var/www/html/bootstrap/cache
 
-# Verify Laravel public directory
-RUN echo "=== PUBLIC DIRECTORY ===" \
-    && ls -la /var/www/html/public \
-    && echo "=== INDEX.PHP ===" \
-    && ls -la /var/www/html/public/index.php
 
 # Nginx
-RUN rm -f /etc/nginx/sites-enabled/default \
-          /etc/nginx/sites-available/default
 
-COPY docker/nginx/default.conf /etc/nginx/conf.d/default.conf
+RUN rm -f /etc/nginx/sites-enabled/default
 
-RUN echo "===== NGINX CONFIG =====" \
-    && cat /etc/nginx/conf.d/default.conf \
-    && echo "===== END NGINX CONFIG ====="
+COPY docker/nginx/default.conf \
+    /etc/nginx/sites-available/default
+
+RUN ln -sf \
+    /etc/nginx/sites-available/default \
+    /etc/nginx/sites-enabled/default
+
+
+# PHP-FPM environment handling
+
+COPY docker/php/99-environment.conf \
+    /usr/local/etc/php-fpm.d/99-environment.conf
+
 
 # Supervisor
+
 COPY docker/supervisor/supervisord.conf \
     /etc/supervisor/conf.d/supervisord.conf
 
-COPY docker/php/99-environment.conf /usr/local/etc/php-fpm.d/99-environment.conf
 
-COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+# Entrypoint
+
+COPY docker/entrypoint.sh \
+    /usr/local/bin/entrypoint.sh
 
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 
-# Validate Nginx configuration
+# Validate nginx
+
 RUN nginx -t
 
+
 EXPOSE 80
+
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 
 CMD ["supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
