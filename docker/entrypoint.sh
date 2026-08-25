@@ -1,5 +1,7 @@
 #!/bin/sh
 
+set -e
+
 echo "======================================"
 echo "Container environment check"
 echo "======================================"
@@ -12,5 +14,15 @@ else
 fi
 
 echo "======================================"
+echo "PHP-FPM environment configuration"
+echo "======================================"
+
+grep -R "clear_env" /usr/local/etc/php-fpm.d/ || true
+
+echo "======================================"
+echo "Laravel"
+echo "======================================"
+
+cd /var/www/html
 
 exec "$@"

@@ -11,9 +11,18 @@ permissions:
 
 jobs:
 
+  # ============================================================
+  # TERRAFORM
+  # ============================================================
+
   terraform:
     uses: ./.github/workflows/terraform.yml
     secrets: inherit
+
+
+  # ============================================================
+  # DEPLOY
+  # ============================================================
 
   deploy:
     runs-on: ubuntu-latest
@@ -21,22 +30,31 @@ jobs:
 
     env:
       AWS_REGION: ${{ secrets.AWS_REGION }}
+
+      # ECR
       ECR_REPOSITORY: lara-aws-tf-prod-laravel
+
+      # Elastic Beanstalk
       EB_APPLICATION: lara-aws-tf-prod
       EB_ENVIRONMENT: lara-aws-tf-prod-env
+
+      # S3
       EB_S3_BUCKET: lara-aws-tf-prod
 
     steps:
 
-      # ----------------------------------------
-      # Checkout
-      # ----------------------------------------
+      # ==========================================================
+      # CHECKOUT
+      # ==========================================================
+
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ----------------------------------------
-      # AWS credentials
-      # ----------------------------------------
+
+      # ==========================================================
+      # AWS CREDENTIALS
+      # ==========================================================
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -44,31 +62,61 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      # ----------------------------------------
-      # Login to ECR
-      # ----------------------------------------
+
+      # ==========================================================
+      # AWS INFORMATION
+      # ==========================================================
+
+      - name: Verify AWS identity
+        run: |
+          aws sts get-caller-identity
+
+
+      # ==========================================================
+      # LOGIN TO ECR
+      # ==========================================================
+
       - name: Login to ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # ----------------------------------------
-      # Image tag
-      # ----------------------------------------
+
+      # ==========================================================
+      # IMAGE TAG
+      # ==========================================================
+
       - name: Set image tag
         run: |
-          echo "IMAGE_TAG=${GITHUB_SHA}" >> $GITHUB_ENV
+          echo "IMAGE_TAG=${GITHUB_SHA}" >> "$GITHUB_ENV"
 
-      # ----------------------------------------
-      # Build Docker image
-      # ----------------------------------------
+          echo "======================================"
+          echo "IMAGE TAG"
+          echo "======================================"
+          echo "$GITHUB_SHA"
+
+
+      # ==========================================================
+      # BUILD DOCKER IMAGE
+      # ==========================================================
+
       - name: Build Docker image
         run: |
-          docker build \
-            -t "${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}" .
+          IMAGE="${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}"
 
-      # ==================================================
-      # IMPORTANT: Inspect image BEFORE pushing to ECR
-      # ==================================================
+          echo "======================================"
+          echo "BUILDING IMAGE"
+          echo "======================================"
+          echo "$IMAGE"
+
+          docker build \
+            --no-cache \
+            -t "$IMAGE" \
+            .
+
+
+      # ==========================================================
+      # INSPECT DOCKER IMAGE
+      # ==========================================================
 
       - name: Inspect Docker image
         run: |
@@ -94,22 +142,49 @@ jobs:
             sh -c 'ls -la /var/www/html/public/index.php'
 
           echo "======================================"
-          echo "NGINX CONFIG"
+          echo "PHP-FPM ENVIRONMENT CONFIG"
+          echo "======================================"
+
+          docker run --rm "$IMAGE" \
+            sh -c 'echo "--- 99-environment.conf ---"; cat /usr/local/etc/php-fpm.d/99-environment.conf'
+
+          echo "======================================"
+          echo "PHP-FPM CLEAR_ENV"
+          echo "======================================"
+
+          docker run --rm "$IMAGE" \
+            sh -c 'grep -R "clear_env" /usr/local/etc/php-fpm.d/ || true'
+
+          echo "======================================"
+          echo "ENTRYPOINT"
+          echo "======================================"
+
+          docker run --rm "$IMAGE" \
+            sh -c 'cat /usr/local/bin/entrypoint.sh'
+
+          echo "======================================"
+          echo "NGINX CONFIGURATION"
           echo "======================================"
 
           docker run --rm "$IMAGE" nginx -T
 
-      # ==================================================
-      # IMPORTANT: Test container locally
-      # ==================================================
+
+      # ==========================================================
+      # TEST DOCKER CONTAINER
+      # ==========================================================
 
       - name: Test Docker container
         run: |
           IMAGE="${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}"
 
+          echo "======================================"
+          echo "START CONTAINER"
+          echo "======================================"
+
           docker run -d \
             --name laravel-test \
             -p 8080:80 \
+            -e APP_KEY="${{ secrets.APP_KEY }}" \
             "$IMAGE"
 
           echo "Waiting for container..."
@@ -125,27 +200,80 @@ jobs:
           echo "CONTAINER LOGS"
           echo "======================================"
 
-          docker logs laravel-test
+          docker logs laravel-test || true
 
           echo "======================================"
-          echo "TEST HTTP"
-          echo "======================================"
-
-          curl -v http://localhost:8080/ || true
-
-          echo "======================================"
-          echo "LARAVEL LOG"
+          echo "APP KEY ENVIRONMENT"
           echo "======================================"
 
           docker exec laravel-test \
-            sh -c 'find /var/www/html/storage/logs -type f -maxdepth 1 -print -exec tail -100 {} \;'
+            sh -c '
+              if [ -n "$APP_KEY" ]; then
+                echo "APP_KEY: PRESENT"
+                echo "APP_KEY length: ${#APP_KEY}"
+              else
+                echo "APP_KEY: MISSING"
+                exit 1
+              fi
+            '
 
           echo "======================================"
-          echo "ENVIRONMENT"
+          echo "PHP CAN READ APP_KEY"
           echo "======================================"
 
           docker exec laravel-test \
-            sh -c 'php artisan about || true'
+            php -r '
+              $key = getenv("APP_KEY");
+
+              if (!$key) {
+                  echo "PHP APP_KEY: MISSING\n";
+                  exit(1);
+              }
+
+              echo "PHP APP_KEY: PRESENT\n";
+              echo "PHP APP_KEY length: " . strlen($key) . "\n";
+            '
+
+          echo "======================================"
+          echo "PHP-FPM CONFIG"
+          echo "======================================"
+
+          docker exec laravel-test \
+            sh -c 'php-fpm -i | grep -i "clear_env" || true'
+
+          echo "======================================"
+          echo "HTTP TEST"
+          echo "======================================"
+
+          curl -i \
+            --fail-with-body \
+            http://localhost:8080/ \
+            || true
+
+          echo "======================================"
+          echo "NGINX TEST"
+          echo "======================================"
+
+          curl -i \
+            --fail-with-body \
+            http://localhost:8080/nginx-test \
+            || true
+
+          echo "======================================"
+          echo "LARAVEL ABOUT"
+          echo "======================================"
+
+          docker exec laravel-test \
+            php artisan about \
+            || true
+
+          echo "======================================"
+          echo "LARAVEL CONFIG CHECK"
+          echo "======================================"
+
+          docker exec laravel-test \
+            php artisan config:show app \
+            || true
 
           echo "======================================"
           echo "PUBLIC DIRECTORY"
@@ -162,46 +290,88 @@ jobs:
             sh -c 'ls -la /var/www/html/public/index.php'
 
           echo "======================================"
-          echo "NGINX CONFIG"
+          echo "LARAVEL LOG"
           echo "======================================"
 
-          docker exec laravel-test nginx -T
+          docker exec laravel-test \
+            sh -c '
+              if [ -d /var/www/html/storage/logs ]; then
+                find /var/www/html/storage/logs \
+                  -maxdepth 1 \
+                  -type f \
+                  -print \
+                  -exec tail -100 {} \;
+              fi
+            ' || true
 
           echo "======================================"
-          echo "PHP-FPM"
+          echo "PHP-FPM PROCESSES"
           echo "======================================"
 
           docker exec laravel-test \
             sh -c 'ps aux | grep php-fpm || true'
 
           echo "======================================"
-          echo "NGINX"
+          echo "NGINX PROCESSES"
           echo "======================================"
 
           docker exec laravel-test \
             sh -c 'ps aux | grep nginx || true'
 
-          docker stop laravel-test
-          docker rm laravel-test
-          
-      # ----------------------------------------
-      # Push image to ECR
-      # ----------------------------------------
+          echo "======================================"
+          echo "STOP TEST CONTAINER"
+          echo "======================================"
+
+          docker stop laravel-test || true
+          docker rm laravel-test || true
+
+
+      # ==========================================================
+      # PUSH IMAGE TO ECR
+      # ==========================================================
+
       - name: Push Docker image
         run: |
-          docker push \
-            "${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          IMAGE="${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}"
 
-      # ----------------------------------------
-      # Create Dockerrun
-      # ----------------------------------------
-      - name: Create Dockerrun
+          echo "======================================"
+          echo "PUSHING IMAGE"
+          echo "======================================"
+          echo "$IMAGE"
+
+          docker push "$IMAGE"
+
+
+      # ==========================================================
+      # VERIFY ECR IMAGE
+      # ==========================================================
+
+      - name: Verify ECR image
         run: |
+          echo "======================================"
+          echo "VERIFY ECR IMAGE"
+          echo "======================================"
+
+          aws ecr describe-images \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids imageTag="$IMAGE_TAG" \
+            --region "$AWS_REGION"
+
+
+      # ==========================================================
+      # CREATE DOCKERRUN
+      # ==========================================================
+
+      - name: Create Dockerrun.aws.json
+        run: |
+
+          IMAGE="${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+
           cat > Dockerrun.aws.json <<EOF
           {
             "AWSEBDockerrunVersion": "1",
             "Image": {
-              "Name": "${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}",
+              "Name": "$IMAGE",
               "Update": "true"
             },
             "Ports": [
@@ -213,51 +383,159 @@ jobs:
           EOF
 
           echo "======================================"
-          echo "DOCKERRUN"
+          echo "DOCKERRUN.AWS.JSON"
           echo "======================================"
 
           cat Dockerrun.aws.json
 
-      # ----------------------------------------
-      # Create deployment package
-      # ----------------------------------------
+
+      # ==========================================================
+      # VALIDATE DOCKERRUN JSON
+      # ==========================================================
+
+      - name: Validate Dockerrun
+        run: |
+          echo "======================================"
+          echo "VALIDATING DOCKERRUN"
+          echo "======================================"
+
+          python -m json.tool Dockerrun.aws.json
+
+
+      # ==========================================================
+      # CREATE DEPLOYMENT PACKAGE
+      # ==========================================================
+
       - name: Create deployment package
         run: |
-          zip deploy.zip Dockerrun.aws.json
 
-      # ----------------------------------------
-      # Upload to S3
-      # ----------------------------------------
+          rm -f deployment.zip
+
+          zip deployment.zip Dockerrun.aws.json
+
+          echo "======================================"
+          echo "DEPLOYMENT PACKAGE"
+          echo "======================================"
+
+          unzip -l deployment.zip
+
+
+      # ==========================================================
+      # UPLOAD DEPLOYMENT PACKAGE TO S3
+      # ==========================================================
+
       - name: Upload deployment package to S3
         run: |
-          aws s3 cp \
-            deploy.zip \
-            s3://${EB_S3_BUCKET}/deployments/${IMAGE_TAG}.zip
 
-      # ----------------------------------------
-      # Create EB application version
-      # ----------------------------------------
+          echo "======================================"
+          echo "UPLOAD TO S3"
+          echo "======================================"
+
+          aws s3 cp \
+            deployment.zip \
+            "s3://${EB_S3_BUCKET}/deployments/${IMAGE_TAG}.zip"
+
+          echo "S3 location:"
+          echo "s3://${EB_S3_BUCKET}/deployments/${IMAGE_TAG}.zip"
+
+
+      # ==========================================================
+      # VERIFY S3 PACKAGE
+      # ==========================================================
+
+      - name: Verify S3 deployment package
+        run: |
+
+          echo "======================================"
+          echo "VERIFY S3 PACKAGE"
+          echo "======================================"
+
+          aws s3 ls \
+            "s3://${EB_S3_BUCKET}/deployments/${IMAGE_TAG}.zip"
+
+
+      # ==========================================================
+      # CREATE ELASTIC BEANSTALK APPLICATION VERSION
+      # ==========================================================
+
       - name: Create Elastic Beanstalk application version
         run: |
+
+          echo "======================================"
+          echo "CREATE EB APPLICATION VERSION"
+          echo "======================================"
+
           aws elasticbeanstalk create-application-version \
             --application-name "$EB_APPLICATION" \
             --version-label "$IMAGE_TAG" \
             --source-bundle \
-              S3Bucket="$EB_S3_BUCKET",S3Key="deployments/${IMAGE_TAG}.zip"
+              "S3Bucket=${EB_S3_BUCKET},S3Key=deployments/${IMAGE_TAG}.zip"
 
-      # ----------------------------------------
-      # Deploy
-      # ----------------------------------------
+
+      # ==========================================================
+      # DEPLOY TO ELASTIC BEANSTALK
+      # ==========================================================
+
       - name: Deploy to Elastic Beanstalk
         run: |
+
+          echo "======================================"
+          echo "DEPLOY TO ELASTIC BEANSTALK"
+          echo "======================================"
+
           aws elasticbeanstalk update-environment \
+            --application-name "$EB_APPLICATION" \
             --environment-name "$EB_ENVIRONMENT" \
             --version-label "$IMAGE_TAG"
 
-      # ----------------------------------------
-      # Wait
-      # ----------------------------------------
-      - name: Wait for deployment
+
+      # ==========================================================
+      # WAIT FOR DEPLOYMENT
+      # ==========================================================
+
+      - name: Wait for Elastic Beanstalk deployment
         run: |
+
+          echo "======================================"
+          echo "WAITING FOR EB"
+          echo "======================================"
+
           aws elasticbeanstalk wait environment-updated \
             --environment-name "$EB_ENVIRONMENT"
+
+
+      # ==========================================================
+      # VERIFY DEPLOYMENT
+      # ==========================================================
+
+      - name: Verify Elastic Beanstalk deployment
+        run: |
+
+          echo "======================================"
+          echo "ELASTIC BEANSTALK STATUS"
+          echo "======================================"
+
+          aws elasticbeanstalk describe-environments \
+            --application-name "$EB_APPLICATION" \
+            --environment-names "$EB_ENVIRONMENT" \
+            --query 'Environments[0].[EnvironmentName,VersionLabel,Status,Health,HealthStatus,CNAME]' \
+            --output table
+
+
+      # ==========================================================
+      # SHOW EB EVENTS
+      # ==========================================================
+
+      - name: Show Elastic Beanstalk events
+        if: always()
+        run: |
+
+          echo "======================================"
+          echo "ELASTIC BEANSTALK EVENTS"
+          echo "======================================"
+
+          aws elasticbeanstalk describe-events \
+            --environment-name "$EB_ENVIRONMENT" \
+            --max-items 30 \
+            --query 'Events[*].[EventDate,Severity,Status,Message]' \
+            --output table
