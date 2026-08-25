@@ -38,9 +38,21 @@ jobs:
         run: terraform validate
 
       - name: Terraform Plan
-        run: terraform plan -lock=false
+        run: terraform plan
+
+      - name: Check Terraform variable
+        env:
+          TF_VAR_app_key: ${{ secrets.APP_KEY }}
+        run: |
+          if [ -z "$TF_VAR_app_key" ]; then
+            echo "APP_KEY is NOT available"
+            exit 1
+          fi
+
+          echo "APP_KEY is available"
+          echo "APP_KEY length: ${#TF_VAR_app_key}"
 
       - name: Terraform Apply
         env:
           TF_VAR_app_key: ${{ secrets.APP_KEY }}
-        run: terraform apply --auto-approve -lock=false
+        run: terraform apply --auto-approve
