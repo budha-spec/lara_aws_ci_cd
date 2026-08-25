@@ -3,8 +3,10 @@
 set -e
 
 echo "======================================"
-echo "Container environment check"
+echo "CONTAINER STARTUP"
 echo "======================================"
+
+echo "APP_ENV: ${APP_ENV:-MISSING}"
 
 if [ -n "$APP_KEY" ]; then
     echo "APP_KEY: PRESENT"
@@ -14,13 +16,23 @@ else
 fi
 
 echo "======================================"
-echo "PHP-FPM environment configuration"
+echo "VITE ASSETS"
 echo "======================================"
 
-grep -R "clear_env" /usr/local/etc/php-fpm.d/ || true
+if [ -f /var/www/html/public/build/manifest.json ]; then
+    echo "Vite manifest: PRESENT"
+else
+    echo "Vite manifest: MISSING"
+fi
 
 echo "======================================"
-echo "Laravel"
+echo "LARAVEL"
+echo "======================================"
+
+php artisan about || true
+
+echo "======================================"
+echo "STARTING SERVICES"
 echo "======================================"
 
 cd /var/www/html

@@ -64,11 +64,15 @@ jobs:
 
 
       # ==========================================================
-      # AWS INFORMATION
+      # VERIFY AWS
       # ==========================================================
 
       - name: Verify AWS identity
         run: |
+          echo "======================================"
+          echo "AWS IDENTITY"
+          echo "======================================"
+
           aws sts get-caller-identity
 
 
@@ -97,35 +101,50 @@ jobs:
 
       # ==========================================================
       # BUILD DOCKER IMAGE
+      #
+      # Vite is built INSIDE Docker.
+      #
+      # Node is only used in the frontend build stage.
+      # Node does NOT need to run in production.
       # ==========================================================
 
       - name: Build Docker image
         run: |
+
           IMAGE="${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}"
 
           echo "======================================"
-          echo "BUILDING IMAGE"
+          echo "BUILDING DOCKER IMAGE"
           echo "======================================"
+
           echo "$IMAGE"
 
           docker build \
             --no-cache \
+            --pull \
             -t "$IMAGE" \
             .
 
 
       # ==========================================================
-      # INSPECT DOCKER IMAGE
+      # INSPECT IMAGE
       # ==========================================================
 
       - name: Inspect Docker image
         run: |
+
           IMAGE="${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}"
 
           echo "======================================"
           echo "IMAGE"
           echo "======================================"
+
           echo "$IMAGE"
+
+
+          # ------------------------------------------------------
+          # PUBLIC DIRECTORY
+          # ------------------------------------------------------
 
           echo "======================================"
           echo "PUBLIC DIRECTORY"
@@ -134,26 +153,107 @@ jobs:
           docker run --rm "$IMAGE" \
             sh -c 'ls -la /var/www/html/public'
 
+
+          # ------------------------------------------------------
+          # INDEX.PHP
+          # ------------------------------------------------------
+
           echo "======================================"
           echo "INDEX.PHP"
           echo "======================================"
 
           docker run --rm "$IMAGE" \
-            sh -c 'ls -la /var/www/html/public/index.php'
+            sh -c 'test -f /var/www/html/public/index.php'
+
+
+          # ------------------------------------------------------
+          # VITE BUILD
+          # ------------------------------------------------------
+
+          echo "======================================"
+          echo "VITE BUILD"
+          echo "======================================"
+
+          docker run --rm "$IMAGE" \
+            sh -c '
+              if [ -d /var/www/html/public/build ]; then
+                echo "Vite build directory: PRESENT"
+                find /var/www/html/public/build \
+                  -maxdepth 2 \
+                  -type f \
+                  -print
+              else
+                echo "Vite build directory: MISSING"
+                exit 1
+              fi
+            '
+
+
+          # ------------------------------------------------------
+          # VITE MANIFEST
+          # ------------------------------------------------------
+
+          echo "======================================"
+          echo "VITE MANIFEST"
+          echo "======================================"
+
+          docker run --rm "$IMAGE" \
+            sh -c '
+              if [ -f /var/www/html/public/build/manifest.json ]; then
+                echo "Vite manifest: PRESENT"
+              else
+                echo "Vite manifest: MISSING"
+                exit 1
+              fi
+            '
+
+
+          # ------------------------------------------------------
+          # VITE MANIFEST CONTENT
+          # ------------------------------------------------------
+
+          echo "======================================"
+          echo "VITE MANIFEST CONTENT"
+          echo "======================================"
+
+          docker run --rm "$IMAGE" \
+            sh -c 'cat /var/www/html/public/build/manifest.json'
+
+
+          # ------------------------------------------------------
+          # PHP-FPM ENVIRONMENT CONFIG
+          # ------------------------------------------------------
 
           echo "======================================"
           echo "PHP-FPM ENVIRONMENT CONFIG"
           echo "======================================"
 
           docker run --rm "$IMAGE" \
-            sh -c 'echo "--- 99-environment.conf ---"; cat /usr/local/etc/php-fpm.d/99-environment.conf'
+            sh -c '
+              echo "--- 99-environment.conf ---"
+              cat /usr/local/etc/php-fpm.d/99-environment.conf
+            '
+
+
+          # ------------------------------------------------------
+          # PHP-FPM CLEAR_ENV
+          # ------------------------------------------------------
 
           echo "======================================"
           echo "PHP-FPM CLEAR_ENV"
           echo "======================================"
 
           docker run --rm "$IMAGE" \
-            sh -c 'grep -R "clear_env" /usr/local/etc/php-fpm.d/ || true'
+            sh -c '
+              grep -R "clear_env" \
+                /usr/local/etc/php-fpm.d/ \
+                || true
+            '
+
+
+          # ------------------------------------------------------
+          # ENTRYPOINT
+          # ------------------------------------------------------
 
           echo "======================================"
           echo "ENTRYPOINT"
@@ -161,6 +261,11 @@ jobs:
 
           docker run --rm "$IMAGE" \
             sh -c 'cat /usr/local/bin/entrypoint.sh'
+
+
+          # ------------------------------------------------------
+          # NGINX CONFIG
+          # ------------------------------------------------------
 
           echo "======================================"
           echo "NGINX CONFIGURATION"
@@ -175,7 +280,13 @@ jobs:
 
       - name: Test Docker container
         run: |
+
           IMAGE="${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+
+
+          # ------------------------------------------------------
+          # START CONTAINER
+          # ------------------------------------------------------
 
           echo "======================================"
           echo "START CONTAINER"
@@ -184,11 +295,20 @@ jobs:
           docker run -d \
             --name laravel-test \
             -p 8080:80 \
+            -e APP_ENV=production \
+            -e APP_DEBUG=false \
             -e APP_KEY="${{ secrets.APP_KEY }}" \
             "$IMAGE"
 
+
           echo "Waiting for container..."
+
           sleep 10
+
+
+          # ------------------------------------------------------
+          # DOCKER PS
+          # ------------------------------------------------------
 
           echo "======================================"
           echo "DOCKER PS"
@@ -196,11 +316,21 @@ jobs:
 
           docker ps -a
 
+
+          # ------------------------------------------------------
+          # CONTAINER LOGS
+          # ------------------------------------------------------
+
           echo "======================================"
           echo "CONTAINER LOGS"
           echo "======================================"
 
           docker logs laravel-test || true
+
+
+          # ------------------------------------------------------
+          # APP KEY
+          # ------------------------------------------------------
 
           echo "======================================"
           echo "APP KEY ENVIRONMENT"
@@ -216,6 +346,11 @@ jobs:
                 exit 1
               fi
             '
+
+
+          # ------------------------------------------------------
+          # PHP APP KEY
+          # ------------------------------------------------------
 
           echo "======================================"
           echo "PHP CAN READ APP_KEY"
@@ -234,21 +369,83 @@ jobs:
               echo "PHP APP_KEY length: " . strlen($key) . "\n";
             '
 
+
+          # ------------------------------------------------------
+          # PHP-FPM CLEAR_ENV
+          # ------------------------------------------------------
+
           echo "======================================"
-          echo "PHP-FPM CONFIG"
+          echo "PHP-FPM CLEAR_ENV"
           echo "======================================"
 
           docker exec laravel-test \
-            sh -c 'php-fpm -i | grep -i "clear_env" || true'
+            sh -c '
+              php-fpm -i | grep -i "clear_env" || true
+            '
+
+
+          # ------------------------------------------------------
+          # VITE BUILD
+          # ------------------------------------------------------
 
           echo "======================================"
-          echo "HTTP TEST"
+          echo "VITE BUILD INSIDE CONTAINER"
           echo "======================================"
 
-          curl -i \
-            --fail-with-body \
-            http://localhost:8080/ \
+          docker exec laravel-test \
+            sh -c '
+              find /var/www/html/public/build \
+                -maxdepth 2 \
+                -type f \
+                -print
+            '
+
+
+          # ------------------------------------------------------
+          # VITE MANIFEST
+          # ------------------------------------------------------
+
+          echo "======================================"
+          echo "VITE MANIFEST"
+          echo "======================================"
+
+          docker exec laravel-test \
+            sh -c '
+              test -f /var/www/html/public/build/manifest.json
+            '
+
+          echo "Vite manifest exists."
+
+
+          # ------------------------------------------------------
+          # LARAVEL ABOUT
+          # ------------------------------------------------------
+
+          echo "======================================"
+          echo "LARAVEL ABOUT"
+          echo "======================================"
+
+          docker exec laravel-test \
+            php artisan about \
             || true
+
+
+          # ------------------------------------------------------
+          # LARAVEL CONFIG
+          # ------------------------------------------------------
+
+          echo "======================================"
+          echo "LARAVEL APP CONFIG"
+          echo "======================================"
+
+          docker exec laravel-test \
+            php artisan config:show app \
+            || true
+
+
+          # ------------------------------------------------------
+          # NGINX TEST
+          # ------------------------------------------------------
 
           echo "======================================"
           echo "NGINX TEST"
@@ -259,21 +456,70 @@ jobs:
             http://localhost:8080/nginx-test \
             || true
 
+
+          # ------------------------------------------------------
+          # HOME PAGE
+          # ------------------------------------------------------
+
           echo "======================================"
-          echo "LARAVEL ABOUT"
+          echo "HOME PAGE"
           echo "======================================"
 
-          docker exec laravel-test \
-            php artisan about \
+          curl -i \
+            --fail-with-body \
+            http://localhost:8080/ \
             || true
 
+
+          # ------------------------------------------------------
+          # LOGIN PAGE
+          # ------------------------------------------------------
+
           echo "======================================"
-          echo "LARAVEL CONFIG CHECK"
+          echo "LOGIN PAGE"
           echo "======================================"
 
-          docker exec laravel-test \
-            php artisan config:show app \
+          curl -s \
+            http://localhost:8080/login \
+            -o /tmp/login.html \
             || true
+
+          echo "Login page saved to /tmp/login.html"
+
+
+          # ------------------------------------------------------
+          # CHECK VITE REFERENCES
+          # ------------------------------------------------------
+
+          echo "======================================"
+          echo "VITE REFERENCES IN LOGIN PAGE"
+          echo "======================================"
+
+          grep -Eo \
+            '/build/[^"]+\.(js|css)' \
+            /tmp/login.html \
+            || true
+
+
+          # ------------------------------------------------------
+          # CHECK LOCALHOST VITE REFERENCES
+          # ------------------------------------------------------
+
+          echo "======================================"
+          echo "CHECK FOR VITE DEV SERVER"
+          echo "======================================"
+
+          if grep -q "localhost:5173" /tmp/login.html; then
+            echo "ERROR: Production page references Vite dev server."
+            exit 1
+          fi
+
+          echo "No localhost:5173 reference found."
+
+
+          # ------------------------------------------------------
+          # PUBLIC DIRECTORY
+          # ------------------------------------------------------
 
           echo "======================================"
           echo "PUBLIC DIRECTORY"
@@ -282,12 +528,22 @@ jobs:
           docker exec laravel-test \
             sh -c 'ls -la /var/www/html/public'
 
+
+          # ------------------------------------------------------
+          # INDEX PHP
+          # ------------------------------------------------------
+
           echo "======================================"
           echo "INDEX.PHP"
           echo "======================================"
 
           docker exec laravel-test \
             sh -c 'ls -la /var/www/html/public/index.php'
+
+
+          # ------------------------------------------------------
+          # LARAVEL LOG
+          # ------------------------------------------------------
 
           echo "======================================"
           echo "LARAVEL LOG"
@@ -296,27 +552,48 @@ jobs:
           docker exec laravel-test \
             sh -c '
               if [ -d /var/www/html/storage/logs ]; then
+
                 find /var/www/html/storage/logs \
                   -maxdepth 1 \
                   -type f \
                   -print \
                   -exec tail -100 {} \;
+
               fi
             ' || true
+
+
+          # ------------------------------------------------------
+          # PHP-FPM PROCESSES
+          # ------------------------------------------------------
 
           echo "======================================"
           echo "PHP-FPM PROCESSES"
           echo "======================================"
 
           docker exec laravel-test \
-            sh -c 'ps aux | grep php-fpm || true'
+            sh -c '
+              ps aux | grep php-fpm || true
+            '
+
+
+          # ------------------------------------------------------
+          # NGINX PROCESSES
+          # ------------------------------------------------------
 
           echo "======================================"
           echo "NGINX PROCESSES"
           echo "======================================"
 
           docker exec laravel-test \
-            sh -c 'ps aux | grep nginx || true'
+            sh -c '
+              ps aux | grep nginx || true
+            '
+
+
+          # ------------------------------------------------------
+          # STOP TEST CONTAINER
+          # ------------------------------------------------------
 
           echo "======================================"
           echo "STOP TEST CONTAINER"
@@ -332,12 +609,12 @@ jobs:
 
       - name: Push Docker image
         run: |
+
           IMAGE="${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}"
 
           echo "======================================"
           echo "PUSHING IMAGE"
           echo "======================================"
-          echo "$IMAGE"
 
           docker push "$IMAGE"
 
@@ -348,6 +625,7 @@ jobs:
 
       - name: Verify ECR image
         run: |
+
           echo "======================================"
           echo "VERIFY ECR IMAGE"
           echo "======================================"
@@ -367,6 +645,13 @@ jobs:
 
           IMAGE="${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}"
 
+          echo "======================================"
+          echo "DOCKER IMAGE"
+          echo "======================================"
+
+          echo "$IMAGE"
+
+
           cat > Dockerrun.aws.json <<EOF
           {
             "AWSEBDockerrunVersion": "1",
@@ -382,6 +667,7 @@ jobs:
           }
           EOF
 
+
           echo "======================================"
           echo "DOCKERRUN.AWS.JSON"
           echo "======================================"
@@ -390,11 +676,12 @@ jobs:
 
 
       # ==========================================================
-      # VALIDATE DOCKERRUN JSON
+      # VALIDATE DOCKERRUN
       # ==========================================================
 
       - name: Validate Dockerrun
         run: |
+
           echo "======================================"
           echo "VALIDATING DOCKERRUN"
           echo "======================================"
@@ -409,19 +696,24 @@ jobs:
       - name: Create deployment package
         run: |
 
+          echo "======================================"
+          echo "CREATING DEPLOYMENT PACKAGE"
+          echo "======================================"
+
           rm -f deployment.zip
 
-          zip deployment.zip Dockerrun.aws.json
+          zip -q deployment.zip Dockerrun.aws.json
+
 
           echo "======================================"
-          echo "DEPLOYMENT PACKAGE"
+          echo "DEPLOYMENT ZIP"
           echo "======================================"
 
           unzip -l deployment.zip
 
 
       # ==========================================================
-      # UPLOAD DEPLOYMENT PACKAGE TO S3
+      # UPLOAD TO S3
       # ==========================================================
 
       - name: Upload deployment package to S3
@@ -435,7 +727,11 @@ jobs:
             deployment.zip \
             "s3://${EB_S3_BUCKET}/deployments/${IMAGE_TAG}.zip"
 
-          echo "S3 location:"
+
+          echo "======================================"
+          echo "S3 LOCATION"
+          echo "======================================"
+
           echo "s3://${EB_S3_BUCKET}/deployments/${IMAGE_TAG}.zip"
 
 
@@ -443,7 +739,7 @@ jobs:
       # VERIFY S3 PACKAGE
       # ==========================================================
 
-      - name: Verify S3 deployment package
+      - name: Verify S3 package
         run: |
 
           echo "======================================"
@@ -455,7 +751,7 @@ jobs:
 
 
       # ==========================================================
-      # CREATE ELASTIC BEANSTALK APPLICATION VERSION
+      # CREATE EB APPLICATION VERSION
       # ==========================================================
 
       - name: Create Elastic Beanstalk application version
@@ -497,7 +793,7 @@ jobs:
         run: |
 
           echo "======================================"
-          echo "WAITING FOR EB"
+          echo "WAITING FOR ELASTIC BEANSTALK"
           echo "======================================"
 
           aws elasticbeanstalk wait environment-updated \
@@ -505,7 +801,7 @@ jobs:
 
 
       # ==========================================================
-      # VERIFY DEPLOYMENT
+      # VERIFY EB
       # ==========================================================
 
       - name: Verify Elastic Beanstalk deployment

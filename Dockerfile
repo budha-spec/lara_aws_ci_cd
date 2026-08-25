@@ -16,6 +16,12 @@ COPY vite.config.js ./
 
 RUN npm run build
 
+# Verify Vite output
+RUN echo "======================================" \
+    && echo "VITE BUILD OUTPUT" \
+    && echo "======================================" \
+    && find /app/public/build -maxdepth 2 -type f -print
+
 
 # ============================================================
 # PHP + NGINX
@@ -50,27 +56,29 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 
-# Composer
+# ============================================================
+# COMPOSER
+# ============================================================
 
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
-
-
-# Composer files first
 
 COPY composer.json composer.lock ./
 
 
-# Laravel application
+# ============================================================
+# LARAVEL APPLICATION
+# ============================================================
 
 COPY . .
 
 
-# Never use config cache generated outside container
-
+# Never use a config cache generated outside container
 RUN rm -f bootstrap/cache/config.php
 
 
-# Install dependencies
+# ============================================================
+# PHP DEPENDENCIES
+# ============================================================
 
 RUN composer install \
     --no-dev \
@@ -80,12 +88,24 @@ RUN composer install \
     --no-progress
 
 
-# Vite build
+# ============================================================
+# VITE BUILD
+# ============================================================
 
 COPY --from=frontend /app/public/build ./public/build
 
 
-# Laravel permissions
+# Verify Vite assets inside final image
+RUN echo "======================================" \
+    && echo "FINAL IMAGE VITE BUILD" \
+    && echo "======================================" \
+    && find /var/www/html/public/build -maxdepth 2 -type f -print \
+    && test -f /var/www/html/public/build/manifest.json
+
+
+# ============================================================
+# LARAVEL PERMISSIONS
+# ============================================================
 
 RUN chown -R www-data:www-data \
         /var/www/html/storage \
@@ -95,7 +115,9 @@ RUN chown -R www-data:www-data \
         /var/www/html/bootstrap/cache
 
 
-# Nginx
+# ============================================================
+# NGINX
+# ============================================================
 
 RUN rm -f /etc/nginx/sites-enabled/default
 
@@ -107,19 +129,25 @@ RUN ln -sf \
     /etc/nginx/sites-enabled/default
 
 
-# PHP-FPM environment handling
+# ============================================================
+# PHP-FPM ENVIRONMENT
+# ============================================================
 
 COPY docker/php/99-environment.conf \
     /usr/local/etc/php-fpm.d/99-environment.conf
 
 
-# Supervisor
+# ============================================================
+# SUPERVISOR
+# ============================================================
 
 COPY docker/supervisor/supervisord.conf \
     /etc/supervisor/conf.d/supervisord.conf
 
 
-# Entrypoint
+# ============================================================
+# ENTRYPOINT
+# ============================================================
 
 COPY docker/entrypoint.sh \
     /usr/local/bin/entrypoint.sh
@@ -127,7 +155,9 @@ COPY docker/entrypoint.sh \
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 
-# Validate nginx
+# ============================================================
+# VALIDATE NGINX
+# ============================================================
 
 RUN nginx -t
 
