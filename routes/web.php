@@ -20,3 +20,12 @@ Route::get('/', function () {
 Auth::routes();
 
 Route::get('/home', [App\Http\Controllers\HomeController::class, 'index'])->name('home');
+
+Route::get('/debug-app-key', function () {
+    return response()->json([
+        'env_exists' => !empty(getenv('APP_KEY')),
+        'config_exists' => !empty(config('app.key')),
+        'env_length' => strlen((string) getenv('APP_KEY')),
+        'config_length' => strlen((string) config('app.key')),
+    ]);
+});

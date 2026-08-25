@@ -58,6 +58,9 @@ COPY composer.json composer.lock ./
 # Copy Laravel application
 COPY . .
 
+# Never ship a previously generated Laravel config cache
+RUN rm -f bootstrap/cache/config.php
+
 # Install PHP dependencies
 RUN composer install \
     --no-dev \
@@ -77,29 +80,19 @@ RUN chown -R www-data:www-data \
         /var/www/html/storage \
         /var/www/html/bootstrap/cache
 
-# Verify Laravel public directory
-RUN echo "=== PUBLIC DIRECTORY ===" \
-    && ls -la /var/www/html/public \
-    && echo "=== INDEX.PHP ===" \
-    && ls -la /var/www/html/public/index.php
+# PHP-FPM: preserve environment variables from Elastic Beanstalk
+COPY docker/php/99-environment.conf \
+    /usr/local/etc/php-fpm.d/99-environment.conf
 
-# Nginx
-RUN rm -f /etc/nginx/sites-enabled/default
+# Container environment diagnostic
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 
-COPY docker/nginx/default.conf \
-    /etc/nginx/sites-available/default
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
-RUN ln -sf \
-    /etc/nginx/sites-available/default \
-    /etc/nginx/sites-enabled/default
-
-# Supervisor
-COPY docker/supervisor/supervisord.conf \
-    /etc/supervisor/conf.d/supervisord.conf
-
-# Validate Nginx configuration
-RUN nginx -t
+# ... nginx/supervisor configuration ...
 
 EXPOSE 80
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 
 CMD ["supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
