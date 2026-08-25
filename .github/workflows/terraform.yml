@@ -37,20 +37,21 @@ jobs:
       - name: Validate Terraform
         run: terraform validate
 
-      - name: Terraform Plan
-        run: terraform plan
-
-      - name: Check Terraform variable
+      - name: Verify APP_KEY
         env:
           TF_VAR_app_key: ${{ secrets.APP_KEY }}
         run: |
           if [ -z "$TF_VAR_app_key" ]; then
-            echo "APP_KEY is NOT available"
+            echo "ERROR: APP_KEY secret is empty or unavailable"
             exit 1
           fi
-
           echo "APP_KEY is available"
           echo "APP_KEY length: ${#TF_VAR_app_key}"
+
+      - name: Terraform Plan
+        env:
+          TF_VAR_app_key: ${{ secrets.APP_KEY }}
+        run: terraform plan
 
       - name: Terraform Apply
         env:
