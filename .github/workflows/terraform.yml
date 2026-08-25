@@ -3,6 +3,10 @@ name: Terraform Infrastructure
 on:
   workflow_call:
 
+concurrency:
+  group: terraform-production
+  cancel-in-progress: false
+
 jobs:
   terraform:
     name: Terraform
