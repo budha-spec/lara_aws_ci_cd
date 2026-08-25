@@ -2,17 +2,15 @@ resource "aws_elastic_beanstalk_application" "laravel" {
     name = local.name
 }
 
-
-data "aws_elastic_beanstalk_solution_stack" "docker_php" {
+data "aws_elastic_beanstalk_solution_stack" "docker" {
   most_recent = true
-  name_regex = "64bit Amazon Linux 2023 v4.13.7 running Docker"
+  name_regex = "64bit Amazon Linux 2023.*running Docker"
 }
-
 
 resource "aws_elastic_beanstalk_environment" "prod" {
     name = "${local.name}-env"
     application = aws_elastic_beanstalk_application.laravel.name
-    solution_stack_name = data.aws_elastic_beanstalk_solution_stack.docker_php.name
+    solution_stack_name = data.aws_elastic_beanstalk_solution_stack.docker.name
 
     lifecycle {
         ignore_changes = [
