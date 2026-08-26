@@ -5,13 +5,17 @@ export default defineConfig({
     plugins: [
         laravel({
             input: [
-                'resources/sass/app.scss',
                 'resources/js/app.js',
+                'resources/js/client.js',
+                'resources/sass/app.scss',
             ],
             refresh: true,
         }),
     ],
+
     build: {
-        manifest: true,
+        manifest: 'manifest.json',
+        outDir: 'public/build',
+        emptyOutDir: true,
     },
 });

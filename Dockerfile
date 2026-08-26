@@ -6,10 +6,6 @@ FROM node:22-alpine AS frontend
 
 WORKDIR /var/www/html
 
-# ------------------------------------------------------------
-# Copy package files first for Docker layer caching
-# ------------------------------------------------------------
-
 COPY package.json package-lock.json* ./
 
 RUN if [ -f package-lock.json ]; then \
@@ -18,41 +14,32 @@ RUN if [ -f package-lock.json ]; then \
         npm install; \
     fi
 
-# ------------------------------------------------------------
-# Copy application source
-# ------------------------------------------------------------
-
 COPY . .
 
-# ------------------------------------------------------------
-# IMPORTANT
-#
-# Never allow Laravel's Vite development "hot" file into
-# the production image.
-# ------------------------------------------------------------
-
+# Never use Vite HMR in production
 RUN rm -f public/hot
 
-# ------------------------------------------------------------
-# Build Vite production assets
-# ------------------------------------------------------------
-
+# Production build
 RUN npm run build
 
-# ------------------------------------------------------------
-# Verify Vite production build
-# ------------------------------------------------------------
+# Diagnostics
+RUN echo "======================================"
+RUN echo "VITE BUILD RESULT"
+RUN echo "======================================"
+
+RUN find public/build \
+    -maxdepth 3 \
+    -type f \
+    -print \
+    | sort
+
+# Required for Laravel Vite
+RUN test -d public/build
 
 RUN test -f public/build/manifest.json
 
-RUN test -d public/build
-
-# ------------------------------------------------------------
-# Make sure development HMR file does not exist
-# ------------------------------------------------------------
-
+# Must never exist in production
 RUN test ! -f public/hot
-
 
 # ============================================================
 # STAGE 2: PHP DEPENDENCIES

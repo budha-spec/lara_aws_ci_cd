@@ -18,15 +18,6 @@ storage/framework/views/*
 deployment.zip
 Dockerrun.aws.json
 
-Dockerfile
-docker-compose.yml
-docker-compose.*.yml
-
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
 .idea
 .vscode
-
 .DS_Store
