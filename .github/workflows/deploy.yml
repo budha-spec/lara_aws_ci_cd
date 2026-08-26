@@ -242,6 +242,7 @@ jobs:
           context: .
           pull: true
           push: true
+          load: true
           tags: ${{ env.IMAGE }}
 
       - name: Verify ECR image
