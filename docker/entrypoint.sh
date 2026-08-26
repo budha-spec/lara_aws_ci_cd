@@ -1,40 +1,76 @@
 #!/bin/sh
 
-set -e
+set -eu
 
 echo "======================================"
-echo "CONTAINER STARTUP"
+echo "LARAVEL CONTAINER STARTING"
 echo "======================================"
 
-echo "APP_ENV: ${APP_ENV:-MISSING}"
+# ------------------------------------------------------------
+# Production safety
+# ------------------------------------------------------------
 
-if [ -n "$APP_KEY" ]; then
-    echo "APP_KEY: PRESENT"
-    echo "APP_KEY length: ${#APP_KEY}"
-else
-    echo "APP_KEY: MISSING"
+rm -f /var/www/html/public/hot
+
+# ------------------------------------------------------------
+# Verify APP_KEY
+# ------------------------------------------------------------
+
+if [ -z "${APP_KEY:-}" ]; then
+    echo "ERROR: APP_KEY is missing."
+    exit 1
 fi
 
-echo "======================================"
-echo "VITE ASSETS"
-echo "======================================"
+echo "APP_KEY: PRESENT"
 
-if [ -f /var/www/html/public/build/manifest.json ]; then
-    echo "Vite manifest: PRESENT"
-else
-    echo "Vite manifest: MISSING"
+# ------------------------------------------------------------
+# Verify Vite production build
+# ------------------------------------------------------------
+
+if [ ! -f /var/www/html/public/build/manifest.json ]; then
+    echo "ERROR: Vite manifest is missing."
+    exit 1
 fi
 
+if [ -f /var/www/html/public/hot ]; then
+    echo "ERROR: Vite hot file exists."
+    exit 1
+fi
+
+echo "Vite production build: PRESENT"
+echo "Vite hot file: NOT PRESENT"
+
+# ------------------------------------------------------------
+# Laravel storage
+# ------------------------------------------------------------
+
+mkdir -p \
+    /var/www/html/storage/framework/cache \
+    /var/www/html/storage/framework/sessions \
+    /var/www/html/storage/framework/views \
+    /var/www/html/storage/logs \
+    /var/www/html/bootstrap/cache
+
+chown -R www-data:www-data \
+    /var/www/html/storage \
+    /var/www/html/bootstrap/cache
+
+# ------------------------------------------------------------
+# Laravel migrations
+#
+# Uncomment only if you want every EB container startup
+# to execute migrations.
+# ------------------------------------------------------------
+
+# php artisan migrate --force
+
+# ------------------------------------------------------------
+# Start Supervisor
+# ------------------------------------------------------------
+
 echo "======================================"
-echo "LARAVEL"
+echo "STARTING NGINX + PHP-FPM"
 echo "======================================"
 
-php artisan about || true
-
-echo "======================================"
-echo "STARTING SERVICES"
-echo "======================================"
-
-cd /var/www/html
-
-exec "$@"
+exec /usr/bin/supervisord \
+    -c /etc/supervisord.conf
