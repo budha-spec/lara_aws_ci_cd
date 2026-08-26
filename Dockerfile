@@ -78,11 +78,9 @@ RUN echo "VITE INPUT FILES"
 RUN echo "======================================"
 
 RUN test -f resources/js/app.js
-RUN test -f resources/js/client.js
 RUN test -f resources/sass/app.scss
 
 RUN echo "app.js: PRESENT"
-RUN echo "client.js: PRESENT"
 RUN echo "app.scss: PRESENT"
 
 # ------------------------------------------------------------
