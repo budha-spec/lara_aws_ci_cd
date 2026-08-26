@@ -39,7 +39,7 @@ RUN echo "======================================"
 RUN echo "RUNNING VITE BUILD"
 RUN echo "======================================"
 
-RUN npm run build -- --debug
+RUN npm run build
 
 # Diagnostics
 RUN echo "======================================"
