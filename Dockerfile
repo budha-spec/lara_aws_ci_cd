@@ -24,7 +24,7 @@ RUN rm -f public/hot \
 
 
 # ============================================================
-# STAGE 2: COMPOSER DEPENDENCIES
+# STAGE 2: COMPOSER
 # ============================================================
 
 FROM composer:2 AS composer
@@ -43,7 +43,7 @@ RUN composer install \
 
 
 # ============================================================
-# STAGE 3: PRODUCTION APPLICATION
+# STAGE 3: APPLICATION
 # ============================================================
 
 FROM php:8.3-fpm-alpine
@@ -52,45 +52,47 @@ WORKDIR /var/www/html
 
 
 # ============================================================
-# SYSTEM + RUNTIME LIBRARIES
-#
-# IMPORTANT:
-# Keep the runtime libraries installed.
-#
-# GD    -> libpng, libjpeg-turbo, freetype
-# INTL  -> icu-libs
-# ZIP   -> libzip
-# MySQL -> mariadb-connector-c
+# RUNTIME PACKAGES
 # ============================================================
 
 RUN apk add --no-cache \
-        nginx \
-        supervisor \
-        curl \
-        ca-certificates \
-        bash \
-        tzdata \
-        icu-libs \
-        libzip \
-        libpng \
-        libjpeg-turbo \
-        freetype \
-        mariadb-connector-c \
-    \
-    && apk add --no-cache --virtual .build-deps \
+    nginx \
+    supervisor \
+    curl \
+    ca-certificates \
+    bash \
+    tzdata \
+    icu-libs \
+    libzip \
+    zlib \
+    libpng \
+    libjpeg-turbo \
+    freetype \
+    mariadb-connector-c
+
+
+# ============================================================
+# PHP BUILD DEPENDENCIES + EXTENSIONS
+# ============================================================
+
+RUN set -eux; \
+    apk add --no-cache --virtual .php-build-deps \
         $PHPIZE_DEPS \
         icu-dev \
         libzip-dev \
+        zlib-dev \
         libpng-dev \
         libjpeg-turbo-dev \
         freetype-dev \
         oniguruma-dev \
+    ; \
     \
-    && docker-php-ext-configure gd \
+    docker-php-ext-configure gd \
         --with-freetype \
         --with-jpeg \
+    ; \
     \
-    && docker-php-ext-install -j"$(nproc)" \
+    docker-php-ext-install -j"$(nproc)" \
         pdo_mysql \
         mbstring \
         bcmath \
@@ -98,32 +100,36 @@ RUN apk add --no-cache \
         intl \
         zip \
         opcache \
+    ; \
     \
-    && apk del .build-deps \
+    apk del .php-build-deps \
+    ; \
     \
-    && rm -rf /tmp/*
+    rm -rf /tmp/*
 
 
 # ============================================================
-# VERIFY PHP EXTENSIONS
+# PHP EXTENSION VALIDATION
 # ============================================================
 
 RUN set -eux; \
-    php -m | grep -qi '^gd$'; \
-    php -m | grep -qi '^intl$'; \
-    php -m | grep -qi '^zip$'; \
-    php -m | grep -qi '^pdo_mysql$'; \
-    php -m | grep -qi '^mbstring$'; \
-    php -m | grep -qi '^bcmath$'; \
-    php -m | grep -qi '^opcache$'
+    php --version; \
+    php --ri gd; \
+    php --ri intl; \
+    php --ri zip; \
+    php --ri pdo_mysql; \
+    php --ri mbstring; \
+    php --ri bcmath; \
+    php --ri opcache
 
 
 # ============================================================
-# PHP PRODUCTION CONFIGURATION
+# PHP INI
 # ============================================================
 
-RUN cp "$PHP_INI_DIR/php.ini-production" \
-       "$PHP_INI_DIR/php.ini"
+RUN cp \
+    "$PHP_INI_DIR/php.ini-production" \
+    "$PHP_INI_DIR/php.ini"
 
 
 # ============================================================
@@ -156,24 +162,20 @@ EOF
 # ============================================================
 
 RUN sed -i \
-        's|^listen = 9000|listen = 127.0.0.1:9000|' \
-        /usr/local/etc/php-fpm.d/www.conf \
+    's|^listen = 9000|listen = 127.0.0.1:9000|' \
+    /usr/local/etc/php-fpm.d/www.conf \
     \
     && sed -i \
-        's|^clear_env = yes|clear_env = no|' \
-        /usr/local/etc/php-fpm.d/www.conf \
+    's|^clear_env = yes|clear_env = no|' \
+    /usr/local/etc/php-fpm.d/www.conf \
     \
     && sed -i \
-        's|^;clear_env = no|clear_env = no|' \
-        /usr/local/etc/php-fpm.d/www.conf
+    's|^;clear_env = no|clear_env = no|' \
+    /usr/local/etc/php-fpm.d/www.conf
 
 
 # ============================================================
 # PHP-FPM ENVIRONMENT
-#
-# Laravel receives these values from the container runtime.
-#
-# DO NOT put secrets into the Dockerfile.
 # ============================================================
 
 RUN cat > /usr/local/etc/php-fpm.d/99-environment.conf <<'EOF'
@@ -207,13 +209,13 @@ EOF
 # ============================================================
 
 RUN mkdir -p \
-        /run/nginx \
-        /var/cache/nginx \
-        /var/log/nginx
+    /run/nginx \
+    /var/cache/nginx \
+    /var/log/nginx
 
 
 # ============================================================
-# NGINX CONFIGURATION
+# NGINX CONFIG
 # ============================================================
 
 RUN rm -f /etc/nginx/http.d/default.conf
@@ -233,22 +235,20 @@ COPY docker/supervisor/supervisord.conf \
 
 
 # ============================================================
-# APPLICATION SOURCE
+# APPLICATION
 # ============================================================
 
 COPY . .
 
 
 # ============================================================
-# REMOVE BUILD-TIME LARAVEL CACHE
-#
-# Runtime environment variables must be used.
+# REMOVE LARAVEL CACHE
 # ============================================================
 
 RUN rm -f \
-        bootstrap/cache/config.php \
-        bootstrap/cache/packages.php \
-        bootstrap/cache/services.php
+    bootstrap/cache/config.php \
+    bootstrap/cache/packages.php \
+    bootstrap/cache/services.php
 
 
 # ============================================================
@@ -261,7 +261,7 @@ COPY --from=composer \
 
 
 # ============================================================
-# VITE PRODUCTION BUILD
+# VITE BUILD
 # ============================================================
 
 COPY --from=frontend \
@@ -273,7 +273,8 @@ COPY --from=frontend \
 # REMOVE VITE HOT FILE
 # ============================================================
 
-RUN rm -f /var/www/html/public/hot
+RUN rm -f \
+    /var/www/html/public/hot
 
 
 # ============================================================
@@ -281,40 +282,36 @@ RUN rm -f /var/www/html/public/hot
 # ============================================================
 
 RUN mkdir -p \
-        storage/framework/cache \
-        storage/framework/sessions \
-        storage/framework/views \
-        storage/logs \
-        bootstrap/cache
+    storage/framework/cache \
+    storage/framework/sessions \
+    storage/framework/views \
+    storage/logs \
+    bootstrap/cache
 
 
 # ============================================================
-# LARAVEL PERMISSIONS
+# PERMISSIONS
 # ============================================================
 
 RUN chown -R www-data:www-data \
-        storage \
-        bootstrap/cache \
-        public \
-    \
-    && chmod -R 775 \
-        storage \
-        bootstrap/cache
+    storage \
+    bootstrap/cache \
+    public
+
+RUN chmod -R 775 \
+    storage \
+    bootstrap/cache
 
 
 # ============================================================
-# CLEAR LARAVEL CACHE
-#
-# DO NOT RUN config:cache HERE.
-#
-# APP_KEY / DB credentials are runtime values.
+# LARAVEL CACHE CLEAR
 # ============================================================
 
 RUN php artisan optimize:clear
 
 
 # ============================================================
-# BUILD VALIDATION
+# APPLICATION VALIDATION
 # ============================================================
 
 RUN set -eux; \
@@ -325,44 +322,28 @@ RUN set -eux; \
 
 
 # ============================================================
-# VERIFY PHP EXTENSIONS AGAIN
+# PHP-FPM CONFIG VALIDATION
 # ============================================================
 
-RUN set -eux; \
-    php --version; \
-    php -m | grep -qi '^gd$'; \
-    php -m | grep -qi '^intl$'; \
-    php -m | grep -qi '^zip$'; \
-    php -m | grep -qi '^pdo_mysql$'; \
-    php -m | grep -qi '^mbstring$'; \
-    php -m | grep -qi '^bcmath$'; \
-    php -m | grep -qi '^opcache$'
+RUN php-fpm -t
 
 
 # ============================================================
-# VERIFY EXTENSION DETAILS
-# ============================================================
-
-RUN php --ri gd > /dev/null \
-    && php --ri intl > /dev/null \
-    && php --ri zip > /dev/null
-
-
-# ============================================================
-# NGINX VALIDATION
+# NGINX CONFIG VALIDATION
 # ============================================================
 
 RUN nginx -t
 
 
 # ============================================================
-# RUNTIME ENTRYPOINT
+# ENTRYPOINT
 # ============================================================
 
 COPY docker/entrypoint.sh \
     /usr/local/bin/entrypoint.sh
 
-RUN chmod +x /usr/local/bin/entrypoint.sh
+RUN chmod +x \
+    /usr/local/bin/entrypoint.sh
 
 
 # ============================================================
@@ -370,9 +351,9 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 # ============================================================
 
 RUN rm -rf \
-        /tmp/* \
-        /root/.cache \
-        /root/.composer
+    /tmp/* \
+    /root/.cache \
+    /root/.composer
 
 
 # ============================================================
