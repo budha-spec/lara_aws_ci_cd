@@ -19,8 +19,27 @@ COPY . .
 # Never use Vite HMR in production
 RUN rm -f public/hot
 
-# Production build
-RUN npm run build
+RUN echo "======================================"
+RUN echo "NODE VERSION"
+RUN node --version
+
+RUN echo "======================================"
+RUN echo "NPM VERSION"
+RUN npm --version
+
+RUN echo "======================================"
+RUN echo "PACKAGE.JSON"
+RUN cat package.json
+
+RUN echo "======================================"
+RUN echo "VITE CONFIG"
+RUN cat vite.config.js
+
+RUN echo "======================================"
+RUN echo "RUNNING VITE BUILD"
+RUN echo "======================================"
+
+RUN npm run build -- --debug
 
 # Diagnostics
 RUN echo "======================================"
