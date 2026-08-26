@@ -2,10 +2,6 @@
 # STAGE 1: VITE / FRONTEND BUILD
 # ============================================================
 
-# ============================================================
-# VITE BUILD STAGE
-# ============================================================
-
 FROM node:22-alpine AS frontend
 
 WORKDIR /var/www/html
@@ -29,45 +25,16 @@ RUN npm ci
 COPY . .
 
 # ------------------------------------------------------------
-# Production mode
+# Production Node environment
 # ------------------------------------------------------------
 
 ENV NODE_ENV=production
 
 # ------------------------------------------------------------
-# IMPORTANT:
-# Never allow Laravel Vite HMR in production
+# Never allow Vite HMR in production
 # ------------------------------------------------------------
 
 RUN rm -f public/hot
-
-# ------------------------------------------------------------
-# Debug information
-# ------------------------------------------------------------
-
-RUN echo "======================================"
-RUN echo "NODE"
-RUN echo "======================================"
-
-RUN node --version
-
-RUN echo "======================================"
-RUN echo "NPM"
-RUN echo "======================================"
-
-RUN npm --version
-
-RUN echo "======================================"
-RUN echo "PACKAGE.JSON"
-RUN echo "======================================"
-
-RUN cat package.json
-
-RUN echo "======================================"
-RUN echo "VITE CONFIG"
-RUN echo "======================================"
-
-RUN cat vite.config.js
 
 # ------------------------------------------------------------
 # Verify source files
@@ -84,7 +51,19 @@ RUN echo "app.js: PRESENT"
 RUN echo "app.scss: PRESENT"
 
 # ------------------------------------------------------------
-# Vite production build
+# Verify Vite dependencies
+# ------------------------------------------------------------
+
+RUN echo "======================================"
+RUN echo "VITE DEPENDENCIES"
+RUN echo "======================================"
+
+RUN npm list vite --depth=0 || true
+RUN npm list laravel-vite-plugin --depth=0 || true
+RUN npm list sass --depth=0 || true
+
+# ------------------------------------------------------------
+# Production Vite build
 # ------------------------------------------------------------
 
 RUN echo "======================================"
@@ -94,12 +73,14 @@ RUN echo "======================================"
 RUN npm run build
 
 # ------------------------------------------------------------
-# Inspect build
+# Verify build output
 # ------------------------------------------------------------
 
 RUN echo "======================================"
 RUN echo "VITE BUILD OUTPUT"
 RUN echo "======================================"
+
+RUN test -d public/build
 
 RUN find public/build \
     -maxdepth 4 \
@@ -107,32 +88,25 @@ RUN find public/build \
     -print \
     | sort
 
-# ------------------------------------------------------------
-# Required Laravel Vite files
-# ------------------------------------------------------------
-
 RUN echo "======================================"
-RUN echo "VERIFY VITE BUILD"
+RUN echo "VITE MANIFEST"
 RUN echo "======================================"
-
-RUN test -d public/build
 
 RUN test -f public/build/manifest.json
 
-RUN echo "Vite build: OK"
-RUN echo "Vite manifest: OK"
+RUN cat public/build/manifest.json
 
 # ------------------------------------------------------------
-# HOT FILE MUST NOT EXIST
+# HOT FILE
 # ------------------------------------------------------------
 
 RUN echo "======================================"
-RUN echo "VERIFY VITE HOT FILE"
+RUN echo "VITE HOT FILE"
 RUN echo "======================================"
 
 RUN test ! -f public/hot
 
-RUN echo "Vite hot file: NOT PRESENT"
+RUN echo "Vite production build: OK"
 
 # ============================================================
 # STAGE 2: PHP DEPENDENCIES
