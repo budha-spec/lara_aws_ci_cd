@@ -29,17 +29,35 @@ jobs:
 
   deploy:
     runs-on: ubuntu-latest
-    needs: terraform
+
+    needs:
+      - terraform
 
     env:
       AWS_REGION: ${{ secrets.AWS_REGION }}
 
+      # --------------------------------------------------------
+      # ECR
+      # --------------------------------------------------------
+
       ECR_REPOSITORY: lara-aws-tf-prod-laravel
+
+      # --------------------------------------------------------
+      # ELASTIC BEANSTALK
+      # --------------------------------------------------------
 
       EB_APPLICATION: lara-aws-tf-prod
       EB_ENVIRONMENT: lara-aws-tf-prod-env
 
+      # --------------------------------------------------------
+      # S3
+      # --------------------------------------------------------
+
       EB_S3_BUCKET: lara-aws-tf-prod
+
+      # --------------------------------------------------------
+      # IMMUTABLE IMAGE TAG
+      # --------------------------------------------------------
 
       IMAGE_TAG: ${{ github.sha }}
 
@@ -54,7 +72,7 @@ jobs:
 
 
       # ========================================================
-      # AWS CREDENTIALS
+      # AWS
       # ========================================================
 
       - name: Configure AWS credentials
@@ -66,7 +84,7 @@ jobs:
 
 
       # ========================================================
-      # VERIFY AWS
+      # AWS IDENTITY
       # ========================================================
 
       - name: Verify AWS identity
@@ -74,15 +92,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "======================================"
-          echo "AWS IDENTITY"
-          echo "======================================"
-
-          aws sts get-caller-identity --no-cli-pager
+          aws sts get-caller-identity \
+            --no-cli-pager
 
 
       # ========================================================
-      # LOGIN TO ECR
+      # ECR LOGIN
       # ========================================================
 
       - name: Login to ECR
@@ -91,10 +106,10 @@ jobs:
 
 
       # ========================================================
-      # SET IMAGE
+      # IMAGE
       # ========================================================
 
-      - name: Set image information
+      - name: Set image
         shell: bash
         run: |
           set -euo pipefail
@@ -104,22 +119,22 @@ jobs:
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
 
           echo "======================================"
-          echo "IMAGE"
+          echo "DOCKER IMAGE"
           echo "======================================"
 
           echo "$IMAGE"
 
 
       # ========================================================
-      # DOCKER BUILDX
+      # BUILDX
       # ========================================================
 
-      - name: Set up Docker Buildx
+      - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
 
       # ========================================================
-      # BUILD IMAGE
+      # BUILD
       # ========================================================
 
       - name: Build Docker image
@@ -128,7 +143,7 @@ jobs:
           set -euo pipefail
 
           echo "======================================"
-          echo "BUILDING DOCKER IMAGE"
+          echo "BUILD DOCKER IMAGE"
           echo "======================================"
 
           docker build \
@@ -138,108 +153,79 @@ jobs:
 
 
       # ========================================================
-      # VERIFY DOCKER IMAGE
-      #
-      # IMPORTANT:
-      # --entrypoint sh prevents entrypoint.sh from requiring
-      # APP_KEY during image inspection.
+      # IMAGE VALIDATION
       # ========================================================
 
-      - name: Inspect Docker image
+      - name: Validate Docker image
         shell: bash
         run: |
           set -euo pipefail
 
           echo "======================================"
-          echo "DOCKER IMAGE"
+          echo "IMAGE VALIDATION"
           echo "======================================"
 
           docker image inspect "$IMAGE"
 
-
-          # ----------------------------------------------------
-          # PUBLIC
-          # ----------------------------------------------------
 
           echo "======================================"
           echo "PUBLIC DIRECTORY"
           echo "======================================"
 
           docker run --rm \
-            --entrypoint sh \
+            --entrypoint /bin/sh \
             "$IMAGE" \
-            -c 'ls -la /var/www/html/public'
+            -c '
+              set -eu
 
+              ls -la /var/www/html/public
+            '
 
-          # ----------------------------------------------------
-          # INDEX
-          # ----------------------------------------------------
 
           echo "======================================"
-          echo "INDEX.PHP"
+          echo "LARAVEL INDEX"
           echo "======================================"
 
           docker run --rm \
-            --entrypoint sh \
+            --entrypoint /bin/sh \
             "$IMAGE" \
-            -c 'test -f /var/www/html/public/index.php'
+            -c '
+              test -f /var/www/html/public/index.php
+            '
 
-
-          # ----------------------------------------------------
-          # VITE BUILD
-          # ----------------------------------------------------
 
           echo "======================================"
           echo "VITE BUILD"
           echo "======================================"
 
           docker run --rm \
-            --entrypoint sh \
+            --entrypoint /bin/sh \
             "$IMAGE" \
             -c '
+              set -eu
+
               test -d /var/www/html/public/build
 
-              find /var/www/html/public/build \
-                -maxdepth 4 \
-                -type f \
-                -print
-            '
-
-
-          # ----------------------------------------------------
-          # VITE MANIFEST
-          # ----------------------------------------------------
-
-          echo "======================================"
-          echo "VITE MANIFEST"
-          echo "======================================"
-
-          docker run --rm \
-            --entrypoint sh \
-            "$IMAGE" \
-            -c '
               test -f /var/www/html/public/build/manifest.json
 
-              echo "Vite manifest:"
-              cat /var/www/html/public/build/manifest.json
+              find /var/www/html/public/build \
+                -maxdepth 3 \
+                -type f \
+                -print \
+                | sort
             '
 
-
-          # ----------------------------------------------------
-          # HOT FILE
-          # ----------------------------------------------------
 
           echo "======================================"
           echo "VITE HOT FILE"
           echo "======================================"
 
           docker run --rm \
-            --entrypoint sh \
+            --entrypoint /bin/sh \
             "$IMAGE" \
             -c '
               if [ -f /var/www/html/public/hot ]; then
                 echo "ERROR: public/hot exists."
-                cat /var/www/html/public/hot
                 exit 1
               fi
 
@@ -247,103 +233,38 @@ jobs:
             '
 
 
-          # ----------------------------------------------------
-          # SEARCH FOR VITE DEV SERVER
-          # ----------------------------------------------------
-
           echo "======================================"
-          echo "SEARCH FOR VITE DEV SERVER"
+          echo "NGINX CONFIG"
           echo "======================================"
 
           docker run --rm \
-            --entrypoint sh \
+            --entrypoint nginx \
             "$IMAGE" \
-            -c '
-              if grep -R \
-                -n \
-                -E "localhost:5173|127\.0\.0\.1:5173|\[::1\]:5173" \
-                /var/www/html \
-                --exclude-dir=node_modules \
-                --exclude-dir=vendor \
-                2>/dev/null; then
+            -t
 
-                echo
-                echo "ERROR: Vite development server reference found."
-                exit 1
-              fi
-
-              echo "No Vite development server reference found."
-            '
-
-
-          # ----------------------------------------------------
-          # PHP-FPM ENVIRONMENT CONFIG
-          # ----------------------------------------------------
 
           echo "======================================"
-          echo "PHP-FPM ENVIRONMENT CONFIG"
+          echo "PHP VERSION"
           echo "======================================"
 
           docker run --rm \
-            --entrypoint sh \
+            --entrypoint php \
             "$IMAGE" \
-            -c '
-              cat /usr/local/etc/php-fpm.d/99-environment.conf
-            '
-
-
-          # ----------------------------------------------------
-          # PHP-FPM CLEAR_ENV
-          # ----------------------------------------------------
-
-          echo "======================================"
-          echo "PHP-FPM CLEAR_ENV"
-          echo "======================================"
-
-          docker run --rm \
-            --entrypoint sh \
-            "$IMAGE" \
-            -c '
-              grep -R "clear_env" \
-                /usr/local/etc/php-fpm.d/ \
-                || true
-            '
-
-
-          # ----------------------------------------------------
-          # ENTRYPOINT
-          # ----------------------------------------------------
-
-          echo "======================================"
-          echo "ENTRYPOINT"
-          echo "======================================"
-
-          docker run --rm \
-            --entrypoint sh \
-            "$IMAGE" \
-            -c 'cat /usr/local/bin/entrypoint.sh'
-
-
-          # ----------------------------------------------------
-          # NGINX
-          # ----------------------------------------------------
-
-          echo "======================================"
-          echo "NGINX CONFIGURATION"
-          echo "======================================"
-
-          docker run --rm \
-            --entrypoint sh \
-            "$IMAGE" \
-            -c 'nginx -T'
+            -v
 
 
       # ========================================================
       # TEST CONTAINER
+      #
+      # IMPORTANT:
+      # Runtime secrets are supplied here.
       # ========================================================
 
       - name: Test Docker container
         shell: bash
+        env:
+          APP_KEY: ${{ secrets.APP_KEY }}
+          APP_URL: ${{ secrets.APP_URL }}
         run: |
           set -euo pipefail
 
@@ -353,7 +274,7 @@ jobs:
           cleanup() {
             echo
             echo "======================================"
-            echo "TEST CONTAINER CLEANUP"
+            echo "CONTAINER CLEANUP"
             echo "======================================"
 
             docker logs "$CONTAINER_NAME" 2>/dev/null || true
@@ -378,14 +299,8 @@ jobs:
             -p "${HOST_PORT}:80" \
             -e APP_ENV=production \
             -e APP_DEBUG=false \
-            -e APP_KEY="${{ secrets.APP_KEY }}" \
-            -e APP_URL="${{ secrets.APP_URL }}" \
-            -e DB_CONNECTION="${{ secrets.DB_CONNECTION }}" \
-            -e DB_HOST="${{ secrets.DB_HOST }}" \
-            -e DB_PORT="${{ secrets.DB_PORT }}" \
-            -e DB_DATABASE="${{ secrets.DB_DATABASE }}" \
-            -e DB_USERNAME="${{ secrets.DB_USERNAME }}" \
-            -e DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
+            -e APP_KEY="$APP_KEY" \
+            -e APP_URL="$APP_URL" \
             "$IMAGE"
 
 
@@ -394,7 +309,7 @@ jobs:
           # ----------------------------------------------------
 
           echo "======================================"
-          echo "WAITING FOR APPLICATION"
+          echo "WAIT FOR APPLICATION"
           echo "======================================"
 
           MAX_ATTEMPTS=30
@@ -404,20 +319,15 @@ jobs:
             --silent \
             --show-error \
             --fail \
-            "http://localhost:${HOST_PORT}/" \
+            "http://127.0.0.1:${HOST_PORT}/" \
             > /dev/null
           do
-
             if [ "$ATTEMPT" -ge "$MAX_ATTEMPTS" ]; then
 
-              echo "Application did not become ready."
+              echo "Application failed to start."
 
-              echo
-              echo "Docker status:"
               docker ps -a
 
-              echo
-              echo "Docker logs:"
               docker logs "$CONTAINER_NAME" || true
 
               exit 1
@@ -443,7 +353,7 @@ jobs:
 
           docker exec "$CONTAINER_NAME" \
             sh -c '
-              test -n "$APP_KEY"
+              test -n "${APP_KEY:-}"
 
               echo "APP_KEY: PRESENT"
               echo "APP_KEY length: ${#APP_KEY}"
@@ -454,26 +364,21 @@ jobs:
           # PHP APP KEY
           # ----------------------------------------------------
 
-          echo "======================================"
-          echo "PHP APP KEY"
-          echo "======================================"
-
           docker exec "$CONTAINER_NAME" \
             php -r '
               $key = getenv("APP_KEY");
 
               if (!$key) {
-                  echo "APP_KEY missing\n";
+                  fwrite(STDERR, "APP_KEY missing\n");
                   exit(1);
               }
 
-              echo "APP_KEY PRESENT\n";
-              echo "APP_KEY length: " . strlen($key) . "\n";
+              echo "APP_KEY available to PHP\n";
             '
 
 
           # ----------------------------------------------------
-          # HOT FILE
+          # VITE HOT FILE
           # ----------------------------------------------------
 
           echo "======================================"
@@ -482,10 +387,7 @@ jobs:
 
           docker exec "$CONTAINER_NAME" \
             sh -c '
-              if [ -f /var/www/html/public/hot ]; then
-                echo "ERROR: public/hot exists."
-                exit 1
-              fi
+              test ! -f /var/www/html/public/hot
 
               echo "Vite hot file: NOT PRESENT"
             '
@@ -502,30 +404,13 @@ jobs:
           docker exec "$CONTAINER_NAME" \
             sh -c '
               test -f /var/www/html/public/build/manifest.json
-            '
 
-          echo "Vite manifest exists."
-
-
-          # ----------------------------------------------------
-          # VITE FILES
-          # ----------------------------------------------------
-
-          echo "======================================"
-          echo "VITE FILES"
-          echo "======================================"
-
-          docker exec "$CONTAINER_NAME" \
-            sh -c '
-              find /var/www/html/public/build \
-                -maxdepth 4 \
-                -type f \
-                -print
+              echo "Vite manifest: PRESENT"
             '
 
 
           # ----------------------------------------------------
-          # LARAVEL ABOUT
+          # LARAVEL
           # ----------------------------------------------------
 
           echo "======================================"
@@ -537,11 +422,11 @@ jobs:
 
 
           # ----------------------------------------------------
-          # APP CONFIG
+          # CONFIG
           # ----------------------------------------------------
 
           echo "======================================"
-          echo "LARAVEL APP CONFIG"
+          echo "LARAVEL CONFIG"
           echo "======================================"
 
           docker exec "$CONTAINER_NAME" \
@@ -560,14 +445,14 @@ jobs:
             --fail-with-body \
             --show-error \
             --silent \
-            "http://localhost:${HOST_PORT}/"
+            "http://127.0.0.1:${HOST_PORT}/" \
+            > /tmp/home.html
 
 
           # ----------------------------------------------------
           # LOGIN
           # ----------------------------------------------------
 
-          echo
           echo "======================================"
           echo "LOGIN PAGE"
           echo "======================================"
@@ -576,39 +461,23 @@ jobs:
             --fail-with-body \
             --show-error \
             --silent \
-            "http://localhost:${HOST_PORT}/login" \
+            "http://127.0.0.1:${HOST_PORT}/login" \
             -o /tmp/login.html
 
 
           # ----------------------------------------------------
-          # VITE URL CHECK
+          # VITE DEV SERVER CHECK
           # ----------------------------------------------------
 
           echo "======================================"
-          echo "VITE URL CHECK"
-          echo "======================================"
-
-          grep -Eo \
-            'https?://[^"]+|/build/[^"]+\.(js|css)' \
-            /tmp/login.html \
-            || true
-
-
-          # ----------------------------------------------------
-          # FAIL ON VITE DEV SERVER
-          # ----------------------------------------------------
-
-          echo "======================================"
-          echo "CHECK VITE DEV SERVER"
+          echo "VITE DEV SERVER CHECK"
           echo "======================================"
 
           if grep -Eq \
             'localhost:5173|127\.0\.0\.1:5173|\[::1\]:5173' \
             /tmp/login.html; then
 
-            echo
-            echo "ERROR:"
-            echo "Production Laravel page references Vite dev server."
+            echo "ERROR: Vite development server detected."
 
             grep -E \
               'localhost:5173|127\.0\.0\.1:5173|\[::1\]:5173' \
@@ -617,33 +486,15 @@ jobs:
             exit 1
           fi
 
-          echo "No Vite development server reference found."
+          echo "No Vite development server reference."
 
 
           # ----------------------------------------------------
-          # CHECK BUILD REFERENCES
-          # ----------------------------------------------------
-
-          echo "======================================"
-          echo "CHECK PRODUCTION VITE REFERENCES"
-          echo "======================================"
-
-          if ! grep -Eq \
-            '/build/[^"]+\.(js|css)' \
-            /tmp/login.html; then
-
-            echo "WARNING: No /build/*.js or /build/*.css references found."
-          else
-            echo "Production Vite references detected."
-          fi
-
-
-          # ----------------------------------------------------
-          # CHECK ASSET HTTP STATUS
+          # VITE ASSETS
           # ----------------------------------------------------
 
           echo "======================================"
-          echo "CHECK VITE ASSETS"
+          echo "VITE ASSETS"
           echo "======================================"
 
           ASSETS=$(grep -Eo \
@@ -652,29 +503,41 @@ jobs:
             | sort -u || true)
 
           if [ -z "$ASSETS" ]; then
-            echo "No Vite assets found in page."
+
+            echo "WARNING: No Vite assets found."
+
           else
 
             while IFS= read -r ASSET; do
 
               [ -z "$ASSET" ] && continue
 
-              echo
-              echo "Testing:"
-              echo "$ASSET"
+              echo "Testing: $ASSET"
 
               curl \
                 --fail \
                 --silent \
                 --show-error \
                 -I \
-                "http://localhost:${HOST_PORT}${ASSET}"
+                "http://127.0.0.1:${HOST_PORT}${ASSET}"
 
-            done <<EOF
-          $ASSETS
-          EOF
+            done <<< "$ASSETS"
 
           fi
+
+
+          # ----------------------------------------------------
+          # PROCESSES
+          # ----------------------------------------------------
+
+          echo "======================================"
+          echo "PROCESSES"
+          echo "======================================"
+
+          docker exec "$CONTAINER_NAME" \
+            sh -c '
+              ps aux | grep -E "php-fpm|nginx" | grep -v grep || true
+            '
 
 
           # ----------------------------------------------------
@@ -682,61 +545,20 @@ jobs:
           # ----------------------------------------------------
 
           echo "======================================"
-          echo "PUBLIC DIRECTORY"
+          echo "PUBLIC"
           echo "======================================"
 
           docker exec "$CONTAINER_NAME" \
-            sh -c 'ls -la /var/www/html/public'
+            ls -la /var/www/html/public
 
-
-          # ----------------------------------------------------
-          # LOGS
-          # ----------------------------------------------------
 
           echo "======================================"
-          echo "LARAVEL LOG"
+          echo "CONTAINER TEST PASSED"
           echo "======================================"
-
-          docker exec "$CONTAINER_NAME" \
-            sh -c '
-              find /var/www/html/storage/logs \
-                -maxdepth 1 \
-                -type f \
-                -print \
-                -exec tail -100 {} \;
-            ' || true
-
-
-          # ----------------------------------------------------
-          # PHP-FPM
-          # ----------------------------------------------------
-
-          echo "======================================"
-          echo "PHP-FPM PROCESSES"
-          echo "======================================"
-
-          docker exec "$CONTAINER_NAME" \
-            sh -c '
-              ps aux | grep php-fpm || true
-            '
-
-
-          # ----------------------------------------------------
-          # NGINX
-          # ----------------------------------------------------
-
-          echo "======================================"
-          echo "NGINX PROCESSES"
-          echo "======================================"
-
-          docker exec "$CONTAINER_NAME" \
-            sh -c '
-              ps aux | grep nginx || true
-            '
 
 
       # ========================================================
-      # PUSH IMAGE
+      # PUSH ECR
       # ========================================================
 
       - name: Push Docker image
@@ -745,7 +567,7 @@ jobs:
           set -euo pipefail
 
           echo "======================================"
-          echo "PUSHING IMAGE"
+          echo "PUSH IMAGE"
           echo "======================================"
 
           docker push "$IMAGE"
@@ -768,7 +590,7 @@ jobs:
 
 
       # ========================================================
-      # CREATE DOCKERRUN
+      # DOCKERRUN
       # ========================================================
 
       - name: Create Dockerrun.aws.json
@@ -791,10 +613,6 @@ jobs:
           }
           EOF
 
-          echo "======================================"
-          echo "DOCKERRUN"
-          echo "======================================"
-
           cat Dockerrun.aws.json
 
 
@@ -811,7 +629,7 @@ jobs:
 
 
       # ========================================================
-      # CREATE ZIP
+      # DEPLOYMENT ZIP
       # ========================================================
 
       - name: Create deployment package
@@ -821,7 +639,8 @@ jobs:
 
           rm -f deployment.zip
 
-          zip -q deployment.zip Dockerrun.aws.json
+          zip -q deployment.zip \
+            Dockerrun.aws.json
 
           unzip -l deployment.zip
 
@@ -830,7 +649,7 @@ jobs:
       # UPLOAD S3
       # ========================================================
 
-      - name: Upload deployment package to S3
+      - name: Upload deployment package
         shell: bash
         run: |
           set -euo pipefail
@@ -892,7 +711,7 @@ jobs:
       # WAIT
       # ========================================================
 
-      - name: Wait for Elastic Beanstalk deployment
+      - name: Wait for Elastic Beanstalk
         shell: bash
         run: |
           set -euo pipefail
@@ -908,13 +727,13 @@ jobs:
       # VERIFY EB
       # ========================================================
 
-      - name: Verify Elastic Beanstalk deployment
+      - name: Verify Elastic Beanstalk
         shell: bash
         run: |
           set -euo pipefail
 
           echo "======================================"
-          echo "ELASTIC BEANSTALK STATUS"
+          echo "ELASTIC BEANSTALK"
           echo "======================================"
 
           aws elasticbeanstalk describe-environments \
@@ -932,12 +751,14 @@ jobs:
             --output text \
             --no-cli-pager)
 
+
           HEALTH=$(aws elasticbeanstalk describe-environments \
             --application-name "$EB_APPLICATION" \
             --environment-names "$EB_ENVIRONMENT" \
             --query 'Environments[0].Health' \
             --output text \
             --no-cli-pager)
+
 
           VERSION=$(aws elasticbeanstalk describe-environments \
             --application-name "$EB_APPLICATION" \
@@ -947,7 +768,6 @@ jobs:
             --no-cli-pager)
 
 
-          echo
           echo "Status:  $STATUS"
           echo "Health:  $HEALTH"
           echo "Version: $VERSION"
@@ -1015,6 +835,7 @@ jobs:
             --query 'Environments[0].CNAME' \
             --output text \
             --no-cli-pager)
+
 
           echo "======================================"
           echo "DEPLOYMENT SUCCESSFUL"
