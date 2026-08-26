@@ -53,26 +53,13 @@ jobs:
 
           IMAGE="${{ steps.ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}"
 
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
           echo "======================================"
           echo "IMAGE CREATED"
           echo "======================================"
 
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
-
-      - name: Build Docker image
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "======================================"
-          echo "BUILDING DOCKER IMAGE"
-          echo "======================================"
-
-          docker build \
-            --pull \
-            --tag "$IMAGE" \
-            .
 
       - name: Test Docker container
         shell: bash
@@ -247,16 +234,13 @@ jobs:
           echo "CONTAINER TEST PASSED"
           echo "======================================"
 
-      - name: Push Docker image
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "======================================"
-          echo "PUSHING IMAGE"
-          echo "======================================"
-
-          docker push "$IMAGE"
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          pull: true
+          push: true
+          tags: $IMAGE
 
       - name: Verify ECR image
         shell: bash
