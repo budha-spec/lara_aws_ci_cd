@@ -26,10 +26,6 @@ COPY resources ./resources
 COPY public ./public
 COPY vite.config.js ./
 
-# If your Vite build needs other files, copy them here.
-# Example:
-# COPY tsconfig.json ./
-
 # ------------------------------------------------------------
 # Production build
 # ------------------------------------------------------------

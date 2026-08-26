@@ -14,66 +14,26 @@ concurrency:
 
 jobs:
 
-  # ============================================================
-  # TERRAFORM
-  # ============================================================
-
   terraform:
     uses: ./.github/workflows/terraform.yml
     secrets: inherit
 
-
-  # ============================================================
-  # DEPLOY
-  # ============================================================
-
   deploy:
     runs-on: ubuntu-latest
-
-    needs:
-      - terraform
+    needs: terraform
 
     env:
       AWS_REGION: ${{ secrets.AWS_REGION }}
-
-      # --------------------------------------------------------
-      # ECR
-      # --------------------------------------------------------
-
       ECR_REPOSITORY: lara-aws-tf-prod-laravel
-
-      # --------------------------------------------------------
-      # ELASTIC BEANSTALK
-      # --------------------------------------------------------
-
       EB_APPLICATION: lara-aws-tf-prod
       EB_ENVIRONMENT: lara-aws-tf-prod-env
-
-      # --------------------------------------------------------
-      # S3
-      # --------------------------------------------------------
-
       EB_S3_BUCKET: lara-aws-tf-prod
-
-      # --------------------------------------------------------
-      # IMMUTABLE IMAGE TAG
-      # --------------------------------------------------------
-
       IMAGE_TAG: ${{ github.sha }}
 
     steps:
 
-      # ========================================================
-      # CHECKOUT
-      # ========================================================
-
       - name: Checkout
         uses: actions/checkout@v4
-
-
-      # ========================================================
-      # AWS
-      # ========================================================
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -82,183 +42,23 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-
-      # ========================================================
-      # AWS IDENTITY
-      # ========================================================
-
-      - name: Verify AWS identity
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          aws sts get-caller-identity \
-            --no-cli-pager
-
-
-      # ========================================================
-      # ECR LOGIN
-      # ========================================================
-
-      - name: Login to ECR
-        id: login-ecr
+      - name: Login to Amazon ECR
+        id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-
-      # ========================================================
-      # IMAGE
-      # ========================================================
-
-      - name: Set image
+      - name: Set Docker image
         shell: bash
         run: |
           set -euo pipefail
 
-          IMAGE="${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}"
-
-          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          IMAGE="${{ steps.ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}"
 
           echo "======================================"
-          echo "DOCKER IMAGE"
+          echo "IMAGE CREATED"
           echo "======================================"
-
-          echo "$IMAGE"
-
-
-      # ========================================================
-      # BUILDX
-      # ========================================================
 
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
-
-
-      # ========================================================
-      # BUILD
-      # ========================================================
-
-      - name: Build Docker image
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "======================================"
-          echo "BUILD DOCKER IMAGE"
-          echo "======================================"
-
-          docker build \
-            --pull \
-            --tag "$IMAGE" \
-            .
-
-
-      # ========================================================
-      # IMAGE VALIDATION
-      # ========================================================
-
-      - name: Validate Docker image
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "======================================"
-          echo "IMAGE VALIDATION"
-          echo "======================================"
-
-          docker image inspect "$IMAGE"
-
-
-          echo "======================================"
-          echo "PUBLIC DIRECTORY"
-          echo "======================================"
-
-          docker run --rm \
-            --entrypoint /bin/sh \
-            "$IMAGE" \
-            -c '
-              set -eu
-
-              ls -la /var/www/html/public
-            '
-
-
-          echo "======================================"
-          echo "LARAVEL INDEX"
-          echo "======================================"
-
-          docker run --rm \
-            --entrypoint /bin/sh \
-            "$IMAGE" \
-            -c '
-              test -f /var/www/html/public/index.php
-            '
-
-
-          echo "======================================"
-          echo "VITE BUILD"
-          echo "======================================"
-
-          docker run --rm \
-            --entrypoint /bin/sh \
-            "$IMAGE" \
-            -c '
-              set -eu
-
-              test -d /var/www/html/public/build
-
-              test -f /var/www/html/public/build/manifest.json
-
-              find /var/www/html/public/build \
-                -maxdepth 3 \
-                -type f \
-                -print \
-                | sort
-            '
-
-
-          echo "======================================"
-          echo "VITE HOT FILE"
-          echo "======================================"
-
-          docker run --rm \
-            --entrypoint /bin/sh \
-            "$IMAGE" \
-            -c '
-              if [ -f /var/www/html/public/hot ]; then
-                echo "ERROR: public/hot exists."
-                exit 1
-              fi
-
-              echo "Vite hot file: NOT PRESENT"
-            '
-
-
-          echo "======================================"
-          echo "NGINX CONFIG"
-          echo "======================================"
-
-          docker run --rm \
-            --entrypoint nginx \
-            "$IMAGE" \
-            -t
-
-
-          echo "======================================"
-          echo "PHP VERSION"
-          echo "======================================"
-
-          docker run --rm \
-            --entrypoint php \
-            "$IMAGE" \
-            -v
-
-
-      # ========================================================
-      # TEST CONTAINER
-      #
-      # IMPORTANT:
-      # Runtime secrets are supplied here.
-      # ========================================================
 
       - name: Test Docker container
         shell: bash
@@ -272,27 +72,20 @@ jobs:
           HOST_PORT="8080"
 
           cleanup() {
-            echo
-            echo "======================================"
-            echo "CONTAINER CLEANUP"
-            echo "======================================"
-
             docker logs "$CONTAINER_NAME" 2>/dev/null || true
-
-            docker stop "$CONTAINER_NAME" 2>/dev/null || true
-            docker rm "$CONTAINER_NAME" 2>/dev/null || true
+            docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
           }
 
           trap cleanup EXIT
 
-
-          # ----------------------------------------------------
-          # START
-          # ----------------------------------------------------
-
           echo "======================================"
-          echo "START CONTAINER"
+          echo "START TEST CONTAINER"
           echo "======================================"
+
+          test -n "$APP_KEY" || {
+            echo "ERROR: APP_KEY GitHub secret is empty."
+            exit 1
+          }
 
           docker run -d \
             --name "$CONTAINER_NAME" \
@@ -304,65 +97,40 @@ jobs:
             "$IMAGE"
 
 
-          # ----------------------------------------------------
-          # WAIT
-          # ----------------------------------------------------
-
           echo "======================================"
           echo "WAIT FOR APPLICATION"
           echo "======================================"
 
           MAX_ATTEMPTS=30
-          ATTEMPT=1
 
-          until curl \
-            --silent \
-            --show-error \
-            --fail \
-            "http://127.0.0.1:${HOST_PORT}/" \
-            > /dev/null
-          do
-            if [ "$ATTEMPT" -ge "$MAX_ATTEMPTS" ]; then
+          for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
 
-              echo "Application failed to start."
+            if curl \
+              --silent \
+              --show-error \
+              --fail \
+              "http://127.0.0.1:${HOST_PORT}/" \
+              > /dev/null; then
 
-              docker ps -a
+              echo "Application is ready."
+              break
+            fi
 
+            if [ "$attempt" -eq "$MAX_ATTEMPTS" ]; then
+              echo "ERROR: Application failed to start."
               docker logs "$CONTAINER_NAME" || true
-
               exit 1
             fi
 
-            echo "Waiting... ${ATTEMPT}/${MAX_ATTEMPTS}"
-
+            echo "Waiting... ${attempt}/${MAX_ATTEMPTS}"
             sleep 2
 
-            ATTEMPT=$((ATTEMPT + 1))
           done
 
-          echo "Application is ready."
-
-
-          # ----------------------------------------------------
-          # APP KEY
-          # ----------------------------------------------------
 
           echo "======================================"
-          echo "APP KEY"
+          echo "VERIFY APP_KEY"
           echo "======================================"
-
-          docker exec "$CONTAINER_NAME" \
-            sh -c '
-              test -n "${APP_KEY:-}"
-
-              echo "APP_KEY: PRESENT"
-              echo "APP_KEY length: ${#APP_KEY}"
-            '
-
-
-          # ----------------------------------------------------
-          # PHP APP KEY
-          # ----------------------------------------------------
 
           docker exec "$CONTAINER_NAME" \
             php -r '
@@ -377,101 +145,33 @@ jobs:
             '
 
 
-          # ----------------------------------------------------
-          # VITE HOT FILE
-          # ----------------------------------------------------
-
           echo "======================================"
-          echo "VITE HOT FILE"
+          echo "VERIFY VITE"
           echo "======================================"
 
           docker exec "$CONTAINER_NAME" \
             sh -c '
+              set -eu
+
+              test -f /var/www/html/public/build/manifest.json
               test ! -f /var/www/html/public/hot
 
+              echo "Vite manifest: OK"
               echo "Vite hot file: NOT PRESENT"
             '
 
 
-          # ----------------------------------------------------
-          # VITE MANIFEST
-          # ----------------------------------------------------
-
           echo "======================================"
-          echo "VITE MANIFEST"
-          echo "======================================"
-
-          docker exec "$CONTAINER_NAME" \
-            sh -c '
-              test -f /var/www/html/public/build/manifest.json
-
-              echo "Vite manifest: PRESENT"
-            '
-
-
-          # ----------------------------------------------------
-          # LARAVEL
-          # ----------------------------------------------------
-
-          echo "======================================"
-          echo "LARAVEL ABOUT"
-          echo "======================================"
-
-          docker exec "$CONTAINER_NAME" \
-            php artisan about
-
-
-          # ----------------------------------------------------
-          # CONFIG
-          # ----------------------------------------------------
-
-          echo "======================================"
-          echo "LARAVEL CONFIG"
-          echo "======================================"
-
-          docker exec "$CONTAINER_NAME" \
-            php artisan config:show app
-
-
-          # ----------------------------------------------------
-          # HOME
-          # ----------------------------------------------------
-
-          echo "======================================"
-          echo "HOME PAGE"
+          echo "VERIFY LOGIN PAGE"
           echo "======================================"
 
           curl \
             --fail-with-body \
-            --show-error \
             --silent \
-            "http://127.0.0.1:${HOST_PORT}/" \
-            > /tmp/home.html
-
-
-          # ----------------------------------------------------
-          # LOGIN
-          # ----------------------------------------------------
-
-          echo "======================================"
-          echo "LOGIN PAGE"
-          echo "======================================"
-
-          curl \
-            --fail-with-body \
             --show-error \
-            --silent \
             "http://127.0.0.1:${HOST_PORT}/login" \
             -o /tmp/login.html
 
-
-          # ----------------------------------------------------
-          # VITE DEV SERVER CHECK
-          # ----------------------------------------------------
-
-          echo "======================================"
-          echo "VITE DEV SERVER CHECK"
-          echo "======================================"
 
           if grep -Eq \
             'localhost:5173|127\.0\.0\.1:5173|\[::1\]:5173' \
@@ -486,96 +186,60 @@ jobs:
             exit 1
           fi
 
+
           echo "No Vite development server reference."
 
 
-          # ----------------------------------------------------
-          # VITE ASSETS
-          # ----------------------------------------------------
-
           echo "======================================"
-          echo "VITE ASSETS"
+          echo "VERIFY VITE ASSETS"
           echo "======================================"
 
-          ASSETS=$(grep -Eo \
-            '/build/[^"]+\.(js|css)' \
-            /tmp/login.html \
-            | sort -u || true)
+          ASSETS=$(
+            grep -Eo \
+              '/build/[^"]+\.(js|css)' \
+              /tmp/login.html \
+              | sort -u \
+              || true
+          )
 
-          if [ -z "$ASSETS" ]; then
+          if [ -n "$ASSETS" ]; then
 
-            echo "WARNING: No Vite assets found."
+            while IFS= read -r asset; do
 
-          else
+              [ -z "$asset" ] && continue
 
-            while IFS= read -r ASSET; do
-
-              [ -z "$ASSET" ] && continue
-
-              echo "Testing: $ASSET"
+              echo "Testing: $asset"
 
               curl \
                 --fail \
                 --silent \
                 --show-error \
                 -I \
-                "http://127.0.0.1:${HOST_PORT}${ASSET}"
+                "http://127.0.0.1:${HOST_PORT}${asset}" \
+                > /dev/null
 
             done <<< "$ASSETS"
 
+            echo "Vite assets: OK"
+
+          else
+
+            echo "No Vite JS/CSS assets detected on login page."
+
           fi
-
-
-          # ----------------------------------------------------
-          # PROCESSES
-          # ----------------------------------------------------
-
-          echo "======================================"
-          echo "PROCESSES"
-          echo "======================================"
-
-          docker exec "$CONTAINER_NAME" \
-            sh -c '
-              ps aux | grep -E "php-fpm|nginx" | grep -v grep || true
-            '
-
-
-          # ----------------------------------------------------
-          # PUBLIC
-          # ----------------------------------------------------
-
-          echo "======================================"
-          echo "PUBLIC"
-          echo "======================================"
-
-          docker exec "$CONTAINER_NAME" \
-            ls -la /var/www/html/public
 
 
           echo "======================================"
           echo "CONTAINER TEST PASSED"
           echo "======================================"
 
-
-      # ========================================================
-      # PUSH ECR
-      # ========================================================
-
-      - name: Push Docker image
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "======================================"
-          echo "PUSH IMAGE"
-          echo "======================================"
-
-          docker push "$IMAGE"
-
-
-      # ========================================================
-      # VERIFY ECR
-      # ========================================================
+      - name: Create and Push docker image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          pull: true
+          push: true
+          tags: $IMAGE
 
       - name: Verify ECR image
         shell: bash
@@ -587,11 +251,6 @@ jobs:
             --image-ids imageTag="$IMAGE_TAG" \
             --region "$AWS_REGION" \
             --no-cli-pager
-
-
-      # ========================================================
-      # DOCKERRUN
-      # ========================================================
 
       - name: Create Dockerrun.aws.json
         shell: bash
@@ -615,39 +274,14 @@ jobs:
 
           cat Dockerrun.aws.json
 
-
-      # ========================================================
-      # VALIDATE DOCKERRUN
-      # ========================================================
-
-      - name: Validate Dockerrun
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          python -m json.tool Dockerrun.aws.json
-
-
-      # ========================================================
-      # DEPLOYMENT ZIP
-      # ========================================================
-
       - name: Create deployment package
         shell: bash
         run: |
           set -euo pipefail
 
-          rm -f deployment.zip
-
-          zip -q deployment.zip \
-            Dockerrun.aws.json
+          zip -q deployment.zip Dockerrun.aws.json
 
           unzip -l deployment.zip
-
-
-      # ========================================================
-      # UPLOAD S3
-      # ========================================================
 
       - name: Upload deployment package
         shell: bash
@@ -658,26 +292,7 @@ jobs:
             deployment.zip \
             "s3://${EB_S3_BUCKET}/deployments/${IMAGE_TAG}.zip"
 
-
-      # ========================================================
-      # VERIFY S3
-      # ========================================================
-
-      - name: Verify S3 package
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          aws s3api head-object \
-            --bucket "$EB_S3_BUCKET" \
-            --key "deployments/${IMAGE_TAG}.zip"
-
-
-      # ========================================================
-      # CREATE EB VERSION
-      # ========================================================
-
-      - name: Create Elastic Beanstalk application version
+      - name: Create Elastic Beanstalk version
         shell: bash
         run: |
           set -euo pipefail
@@ -690,15 +305,14 @@ jobs:
             --process \
             --no-cli-pager
 
-
-      # ========================================================
-      # DEPLOY EB
-      # ========================================================
-
       - name: Deploy to Elastic Beanstalk
         shell: bash
         run: |
           set -euo pipefail
+
+          echo "======================================"
+          echo "DEPLOYING"
+          echo "======================================"
 
           aws elasticbeanstalk update-environment \
             --application-name "$EB_APPLICATION" \
@@ -706,81 +320,51 @@ jobs:
             --version-label "$IMAGE_TAG" \
             --no-cli-pager
 
-
-      # ========================================================
-      # WAIT
-      # ========================================================
-
       - name: Wait for Elastic Beanstalk
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "Waiting for Elastic Beanstalk..."
+          echo "Waiting for Elastic Beanstalk deployment..."
 
           aws elasticbeanstalk wait environment-updated \
             --environment-name "$EB_ENVIRONMENT" \
             --no-cli-pager
 
+          echo "Elastic Beanstalk deployment completed."
 
-      # ========================================================
-      # VERIFY EB
-      # ========================================================
-
-      - name: Verify Elastic Beanstalk
+      - name: Verify deployment
         shell: bash
         run: |
           set -euo pipefail
 
           echo "======================================"
-          echo "ELASTIC BEANSTALK"
+          echo "ELASTIC BEANSTALK STATUS"
           echo "======================================"
 
-          aws elasticbeanstalk describe-environments \
-            --application-name "$EB_APPLICATION" \
-            --environment-names "$EB_ENVIRONMENT" \
-            --query 'Environments[0].[EnvironmentName,VersionLabel,Status,Health,HealthStatus,CNAME]' \
-            --output table \
-            --no-cli-pager
-
-
-          STATUS=$(aws elasticbeanstalk describe-environments \
-            --application-name "$EB_APPLICATION" \
-            --environment-names "$EB_ENVIRONMENT" \
-            --query 'Environments[0].Status' \
-            --output text \
-            --no-cli-pager)
-
-
-          HEALTH=$(aws elasticbeanstalk describe-environments \
-            --application-name "$EB_APPLICATION" \
-            --environment-names "$EB_ENVIRONMENT" \
-            --query 'Environments[0].Health' \
-            --output text \
-            --no-cli-pager)
-
-
-          VERSION=$(aws elasticbeanstalk describe-environments \
-            --application-name "$EB_APPLICATION" \
-            --environment-names "$EB_ENVIRONMENT" \
-            --query 'Environments[0].VersionLabel' \
-            --output text \
-            --no-cli-pager)
-
+          read -r STATUS HEALTH VERSION CNAME <<< "$(
+            aws elasticbeanstalk describe-environments \
+              --application-name "$EB_APPLICATION" \
+              --environment-names "$EB_ENVIRONMENT" \
+              --query 'Environments[0].[Status,Health,VersionLabel,CNAME]' \
+              --output text \
+              --no-cli-pager
+          )"
 
           echo "Status:  $STATUS"
           echo "Health:  $HEALTH"
           echo "Version: $VERSION"
+          echo "CNAME:   $CNAME"
 
 
           if [ "$STATUS" != "Ready" ]; then
-            echo "ERROR: EB environment is not Ready."
+            echo "ERROR: Elastic Beanstalk is not Ready."
             exit 1
           fi
 
 
           if [ "$VERSION" != "$IMAGE_TAG" ]; then
-            echo "ERROR: Wrong EB version deployed."
+            echo "ERROR: Incorrect version deployed."
             echo "Expected: $IMAGE_TAG"
             echo "Actual:   $VERSION"
             exit 1
@@ -789,21 +373,16 @@ jobs:
 
           case "$HEALTH" in
             Green|Yellow)
-              echo "Elastic Beanstalk health accepted: $HEALTH"
+              echo "Health accepted: $HEALTH"
               ;;
             *)
-              echo "ERROR: Elastic Beanstalk health: $HEALTH"
+              echo "ERROR: Invalid EB health: $HEALTH"
               exit 1
               ;;
           esac
 
-
-      # ========================================================
-      # EVENTS
-      # ========================================================
-
       - name: Show Elastic Beanstalk events
-        if: always()
+        if: failure()
         shell: bash
         run: |
           set +e
@@ -819,30 +398,27 @@ jobs:
             --output table \
             --no-cli-pager
 
-
-      # ========================================================
-      # SUMMARY
-      # ========================================================
-
-      - name: Deployment summary
+      - name: Deployment successful
         shell: bash
         run: |
           set -euo pipefail
 
-          CNAME=$(aws elasticbeanstalk describe-environments \
-            --application-name "$EB_APPLICATION" \
-            --environment-names "$EB_ENVIRONMENT" \
-            --query 'Environments[0].CNAME' \
-            --output text \
-            --no-cli-pager)
+          CNAME=$(
+            aws elasticbeanstalk describe-environments \
+              --application-name "$EB_APPLICATION" \
+              --environment-names "$EB_ENVIRONMENT" \
+              --query 'Environments[0].CNAME' \
+              --output text \
+              --no-cli-pager
+          )
 
-
+          echo
           echo "======================================"
           echo "DEPLOYMENT SUCCESSFUL"
           echo "======================================"
-
-          echo "Application: $EB_APPLICATION"
-          echo "Environment: $EB_ENVIRONMENT"
-          echo "Version:     $IMAGE_TAG"
-          echo "Image:       $IMAGE"
-          echo "CNAME:       $CNAME"
+          echo "Application : $EB_APPLICATION"
+          echo "Environment : $EB_ENVIRONMENT"
+          echo "Version     : $IMAGE_TAG"
+          echo "Image       : $IMAGE"
+          echo "CNAME       : $CNAME"
+          echo "======================================"
