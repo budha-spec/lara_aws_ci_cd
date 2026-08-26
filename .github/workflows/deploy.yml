@@ -242,7 +242,7 @@ jobs:
           context: .
           pull: true
           push: true
-          tags: $IMAGE
+          tags: ${{ env.IMAGE }}
 
       - name: Verify ECR image
         shell: bash
