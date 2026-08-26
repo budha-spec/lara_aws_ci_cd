@@ -89,48 +89,6 @@ jobs:
           echo "APP_KEY length: ${#APP_KEY}"
           echo "APP_URL: PRESENT"
 
-
-      # ========================================================
-      # VERIFY DATABASE SECRETS
-      # ========================================================
-
-      - name: Verify database secrets
-        shell: bash
-        env:
-          DB_CONNECTION: ${{ secrets.DB_CONNECTION }}
-          DB_HOST: ${{ secrets.DB_HOST }}
-          DB_PORT: ${{ secrets.DB_PORT }}
-          DB_DATABASE: ${{ secrets.DB_DATABASE }}
-          DB_USERNAME: ${{ secrets.DB_USERNAME }}
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-        run: |
-          set -euo pipefail
-
-          echo "======================================"
-          echo "VERIFY DATABASE SECRETS"
-          echo "======================================"
-
-          for name in \
-            DB_CONNECTION \
-            DB_HOST \
-            DB_PORT \
-            DB_DATABASE \
-            DB_USERNAME \
-            DB_PASSWORD
-          do
-
-            value="${!name:-}"
-
-            if [ -z "$value" ]; then
-              echo "ERROR: $name GitHub secret is missing."
-              exit 1
-            fi
-
-            echo "$name: PRESENT"
-
-          done
-
-
       # ========================================================
       # AWS CREDENTIALS
       # ========================================================
