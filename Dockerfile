@@ -293,37 +293,19 @@ RUN chmod -R 775 \
 
 
 # ============================================================
-# CLEAR LARAVEL CACHE
+# LARAVEL CACHE
 # ============================================================
 
 RUN php artisan optimize:clear
 
 
 # ============================================================
-# VERIFY PHP EXTENSIONS
-#
-# IMPORTANT:
-# Do this separately so we know exactly what fails.
+# PHP VALIDATION
 # ============================================================
 
+RUN php -v
+
 RUN php -m
-
-
-RUN php --ri gd
-
-RUN php --ri intl
-
-RUN php --ri zip
-
-RUN php --ri pdo_mysql
-
-RUN php --ri pdo_pgsql
-
-RUN php --ri mbstring
-
-RUN php --ri bcmath
-
-RUN php --ri opcache
 
 
 # ============================================================
@@ -345,7 +327,7 @@ RUN nginx -t
 
 
 # ============================================================
-# PHP-FPM CONFIG VALIDATION
+# PHP-FPM VALIDATION
 # ============================================================
 
 RUN php-fpm -t
@@ -386,3 +368,4 @@ EXPOSE 80
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 
 CMD ["supervisord", "-c", "/etc/supervisord.conf"]
+
