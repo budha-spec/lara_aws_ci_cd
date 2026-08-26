@@ -1,5 +1,5 @@
 # ============================================================
-# STAGE 1: FRONTEND / VITE
+# STAGE 1: VITE
 # ============================================================
 
 FROM node:22-alpine AS frontend
@@ -42,7 +42,7 @@ RUN composer install \
 
 
 # ============================================================
-# STAGE 3: LARAVEL APPLICATION
+# STAGE 3: PHP APPLICATION
 # ============================================================
 
 FROM php:8.3-fpm-alpine
@@ -51,41 +51,50 @@ WORKDIR /var/www/html
 
 
 # ============================================================
-# SYSTEM PACKAGES + PHP EXTENSIONS
+# SYSTEM RUNTIME PACKAGES
+# ============================================================
+
+RUN apk add --no-cache \
+    nginx \
+    supervisor \
+    bash \
+    curl \
+    ca-certificates \
+    git \
+    unzip \
+    tzdata \
+    libpng \
+    libjpeg-turbo \
+    freetype \
+    icu-libs \
+    libzip \
+    oniguruma \
+    libpq
+
+
+# ============================================================
+# PHP EXTENSION BUILD DEPENDENCIES
+# ============================================================
+
+RUN apk add --no-cache --virtual .build-deps \
+    $PHPIZE_DEPS \
+    libpng-dev \
+    libjpeg-turbo-dev \
+    freetype-dev \
+    icu-dev \
+    libzip-dev \
+    oniguruma-dev \
+    postgresql-dev
+
+
+# ============================================================
+# PHP EXTENSIONS
 # ============================================================
 
 RUN set -eux; \
-    apk add --no-cache \
-        nginx \
-        supervisor \
-        bash \
-        curl \
-        ca-certificates \
-        git \
-        unzip \
-        tzdata \
-        libpng \
-        libjpeg-turbo \
-        freetype \
-        icu-libs \
-        libzip \
-        oniguruma \
-        libpq \
-    ; \
-    apk add --no-cache --virtual .build-deps \
-        $PHPIZE_DEPS \
-        libpng-dev \
-        libjpeg-turbo-dev \
-        freetype-dev \
-        icu-dev \
-        libzip-dev \
-        oniguruma-dev \
-        postgresql-dev \
-    ; \
     docker-php-ext-configure gd \
         --with-freetype \
-        --with-jpeg \
-    ; \
+        --with-jpeg; \
     docker-php-ext-install -j"$(nproc)" \
         pdo_mysql \
         pdo_pgsql \
@@ -94,47 +103,28 @@ RUN set -eux; \
         gd \
         intl \
         zip \
-        opcache \
-    ; \
-    apk del .build-deps \
-    ; \
-    rm -rf /tmp/*
-
-# ============================================================
-# VERIFY PHP EXTENSIONS
-# ============================================================
-
-RUN set -eux; \
-    php -v; \
-    php -m; \
-    php -m | grep -E '^gd$'; \
-    php -m | grep -E '^intl$'; \
-    php -m | grep -E '^zip$'; \
-    php -m | grep -E '^pdo_mysql$'; \
-    php -m | grep -E '^pdo_pgsql$'; \
-    php -m | grep -E '^mbstring$'; \
-    php -m | grep -E '^bcmath$'; \
-    php -m | grep -E '^Zend OPcache$'
+        opcache
 
 
 # ============================================================
-# PHP EXTENSION CHECK
+# REMOVE BUILD DEPENDENCIES
 # ============================================================
 
-RUN php -m
+RUN apk del .build-deps \
+    && rm -rf /tmp/*
 
 
 # ============================================================
-# PHP INI
+# PHP PRODUCTION CONFIG
 # ============================================================
 
-RUN cp \
+RUN mv \
     "$PHP_INI_DIR/php.ini-production" \
     "$PHP_INI_DIR/php.ini"
 
 
 # ============================================================
-# PHP PRODUCTION SETTINGS
+# PHP CONFIGURATION
 # ============================================================
 
 RUN cat > /usr/local/etc/php/conf.d/99-production.ini <<'EOF'
@@ -167,18 +157,16 @@ RUN sed -i \
     /usr/local/etc/php-fpm.d/www.conf
 
 RUN sed -i \
-    's|^clear_env = yes|clear_env = no|' \
+    's|^;clear_env = no|clear_env = no|' \
     /usr/local/etc/php-fpm.d/www.conf
 
 RUN sed -i \
-    's|^;clear_env = no|clear_env = no|' \
+    's|^clear_env = yes|clear_env = no|' \
     /usr/local/etc/php-fpm.d/www.conf
 
 
 # ============================================================
 # PHP-FPM ENVIRONMENT
-#
-# Values are supplied at runtime.
 # ============================================================
 
 RUN cat > /usr/local/etc/php-fpm.d/99-environment.conf <<'EOF'
@@ -208,13 +196,18 @@ EOF
 
 
 # ============================================================
-# NGINX
+# NGINX DIRECTORIES
 # ============================================================
 
 RUN mkdir -p \
     /run/nginx \
     /var/cache/nginx \
     /var/log/nginx
+
+
+# ============================================================
+# NGINX CONFIG
+# ============================================================
 
 RUN rm -f /etc/nginx/http.d/default.conf
 
@@ -225,8 +218,6 @@ COPY docker/nginx/default.conf \
 # ============================================================
 # SUPERVISOR
 # ============================================================
-
-RUN mkdir -p /etc/supervisor.d
 
 COPY docker/supervisor/supervisord.conf \
     /etc/supervisord.conf
@@ -240,7 +231,7 @@ COPY . .
 
 
 # ============================================================
-# REMOVE CACHED LARAVEL CONFIG
+# REMOVE BUILD-TIME LARAVEL CACHE
 # ============================================================
 
 RUN rm -f \
@@ -250,7 +241,7 @@ RUN rm -f \
 
 
 # ============================================================
-# COMPOSER
+# COMPOSER VENDOR
 # ============================================================
 
 COPY --from=composer \
@@ -259,14 +250,20 @@ COPY --from=composer \
 
 
 # ============================================================
-# VITE
+# VITE BUILD
 # ============================================================
 
 COPY --from=frontend \
     /app/public/build \
     /var/www/html/public/build
 
-RUN rm -f /var/www/html/public/hot
+
+# ============================================================
+# REMOVE VITE HOT FILE
+# ============================================================
+
+RUN rm -f \
+    /var/www/html/public/hot
 
 
 # ============================================================
@@ -303,27 +300,41 @@ RUN php artisan optimize:clear
 
 
 # ============================================================
-# VALIDATION
+# VERIFY PHP EXTENSIONS
+#
+# IMPORTANT:
+# Do this separately so we know exactly what fails.
 # ============================================================
 
-RUN set -eux; \
-    test -f public/index.php; \
-    test -f public/build/manifest.json; \
-    test ! -f public/hot; \
-    php -m | grep -i '^gd$'; \
-    php -m | grep -i '^intl$'; \
-    php -m | grep -i '^zip$'; \
-    php -m | grep -i '^pdo_mysql$'; \
-    php -m | grep -i '^mbstring$'; \
-    php -m | grep -i '^bcmath$'; \
-    php -m | grep -i '^opcache$'
+RUN php -m
+
+
+RUN php --ri gd
+
+RUN php --ri intl
+
+RUN php --ri zip
+
+RUN php --ri pdo_mysql
+
+RUN php --ri pdo_pgsql
+
+RUN php --ri mbstring
+
+RUN php --ri bcmath
+
+RUN php --ri opcache
 
 
 # ============================================================
-# PHP-FPM VALIDATION
+# APPLICATION VALIDATION
 # ============================================================
 
-RUN php-fpm -t
+RUN test -f public/index.php
+
+RUN test -f public/build/manifest.json
+
+RUN test ! -f public/hot
 
 
 # ============================================================
@@ -331,6 +342,13 @@ RUN php-fpm -t
 # ============================================================
 
 RUN nginx -t
+
+
+# ============================================================
+# PHP-FPM CONFIG VALIDATION
+# ============================================================
+
+RUN php-fpm -t
 
 
 # ============================================================
