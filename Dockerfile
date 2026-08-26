@@ -6,52 +6,21 @@ FROM node:22-alpine AS frontend
 
 WORKDIR /app
 
-# ------------------------------------------------------------
-# Package files
-# ------------------------------------------------------------
-
 COPY package.json package-lock.json ./
 
-# ------------------------------------------------------------
-# Install exact dependencies
-# ------------------------------------------------------------
-
 RUN npm ci
-
-# ------------------------------------------------------------
-# Frontend source
-# ------------------------------------------------------------
 
 COPY resources ./resources
 COPY public ./public
 COPY vite.config.js ./
 
-# ------------------------------------------------------------
-# Production build
-# ------------------------------------------------------------
-
 ENV NODE_ENV=production
 
 RUN rm -f public/hot \
-    && npm run build
-
-# ------------------------------------------------------------
-# Verify Vite build
-# ------------------------------------------------------------
-
-RUN test -d /app/public/build \
-    && test -f /app/public/build/manifest.json \
-    && test ! -f /app/public/hot
-
-RUN echo "======================================"
-RUN echo "VITE BUILD"
-RUN echo "======================================"
-
-RUN find /app/public/build \
-    -maxdepth 3 \
-    -type f \
-    -print \
-    | sort
+    && npm run build \
+    && test -d public/build \
+    && test -f public/build/manifest.json \
+    && test ! -f public/hot
 
 
 # ============================================================
@@ -62,15 +31,7 @@ FROM composer:2 AS composer
 
 WORKDIR /app
 
-# ------------------------------------------------------------
-# Composer files
-# ------------------------------------------------------------
-
 COPY composer.json composer.lock ./
-
-# ------------------------------------------------------------
-# Install production dependencies
-# ------------------------------------------------------------
 
 RUN composer install \
     --no-dev \
@@ -89,49 +50,73 @@ FROM php:8.3-fpm-alpine
 
 WORKDIR /var/www/html
 
+
 # ============================================================
-# SYSTEM PACKAGES
+# SYSTEM + RUNTIME LIBRARIES
+#
+# IMPORTANT:
+# Keep the runtime libraries installed.
+#
+# GD    -> libpng, libjpeg-turbo, freetype
+# INTL  -> icu-libs
+# ZIP   -> libzip
+# MySQL -> mariadb-connector-c
 # ============================================================
 
 RUN apk add --no-cache \
-    nginx \
-    supervisor \
-    bash \
-    curl \
-    git \
-    unzip \
-    tzdata \
-    icu-dev \
-    libzip-dev \
-    oniguruma-dev \
-    libpng-dev \
-    libjpeg-turbo-dev \
-    freetype-dev \
-    mariadb-connector-c-dev
-
-# ============================================================
-# PHP EXTENSIONS
-# ============================================================
-
-RUN docker-php-ext-configure gd \
+        nginx \
+        supervisor \
+        curl \
+        ca-certificates \
+        bash \
+        tzdata \
+        icu-libs \
+        libzip \
+        libpng \
+        libjpeg-turbo \
+        freetype \
+        mariadb-connector-c \
+    \
+    && apk add --no-cache --virtual .build-deps \
+        $PHPIZE_DEPS \
+        icu-dev \
+        libzip-dev \
+        libpng-dev \
+        libjpeg-turbo-dev \
+        freetype-dev \
+        oniguruma-dev \
+    \
+    && docker-php-ext-configure gd \
         --with-freetype \
         --with-jpeg \
+    \
     && docker-php-ext-install -j"$(nproc)" \
-        pdo \
         pdo_mysql \
         mbstring \
         bcmath \
+        gd \
         intl \
         zip \
         opcache \
-        gd \
-    && apk del \
-        icu-dev \
-        libzip-dev \
-        oniguruma-dev \
-        libpng-dev \
-        libjpeg-turbo-dev \
-        freetype-dev
+    \
+    && apk del .build-deps \
+    \
+    && rm -rf /tmp/*
+
+
+# ============================================================
+# VERIFY PHP EXTENSIONS
+# ============================================================
+
+RUN set -eux; \
+    php -m | grep -qi '^gd$'; \
+    php -m | grep -qi '^intl$'; \
+    php -m | grep -qi '^zip$'; \
+    php -m | grep -qi '^pdo_mysql$'; \
+    php -m | grep -qi '^mbstring$'; \
+    php -m | grep -qi '^bcmath$'; \
+    php -m | grep -qi '^opcache$'
+
 
 # ============================================================
 # PHP PRODUCTION CONFIGURATION
@@ -140,11 +125,22 @@ RUN docker-php-ext-configure gd \
 RUN cp "$PHP_INI_DIR/php.ini-production" \
        "$PHP_INI_DIR/php.ini"
 
+
 # ============================================================
-# PHP OPCACHE
+# PHP PRODUCTION SETTINGS
 # ============================================================
 
 RUN cat > /usr/local/etc/php/conf.d/99-production.ini <<'EOF'
+expose_php=Off
+
+memory_limit=256M
+
+upload_max_filesize=50M
+post_max_size=50M
+
+max_execution_time=300
+max_input_time=300
+
 opcache.enable=1
 opcache.enable_cli=1
 opcache.validate_timestamps=0
@@ -152,35 +148,33 @@ opcache.revalidate_freq=0
 opcache.memory_consumption=128
 opcache.interned_strings_buffer=16
 opcache.max_accelerated_files=20000
-
-expose_php=Off
-memory_limit=256M
-upload_max_filesize=50M
-post_max_size=50M
-max_execution_time=300
 EOF
+
 
 # ============================================================
 # PHP-FPM
 # ============================================================
 
-RUN sed -i 's|^listen = 9000|listen = 127.0.0.1:9000|' \
-    /usr/local/etc/php-fpm.d/www.conf
+RUN sed -i \
+        's|^listen = 9000|listen = 127.0.0.1:9000|' \
+        /usr/local/etc/php-fpm.d/www.conf \
+    \
+    && sed -i \
+        's|^clear_env = yes|clear_env = no|' \
+        /usr/local/etc/php-fpm.d/www.conf \
+    \
+    && sed -i \
+        's|^;clear_env = no|clear_env = no|' \
+        /usr/local/etc/php-fpm.d/www.conf
 
-RUN sed -i 's|^;clear_env = no|clear_env = no|' \
-    /usr/local/etc/php-fpm.d/www.conf
 
-RUN sed -i 's|^clear_env = yes|clear_env = no|' \
-    /usr/local/etc/php-fpm.d/www.conf
-
-# ------------------------------------------------------------
-# PHP-FPM environment
+# ============================================================
+# PHP-FPM ENVIRONMENT
 #
-# These values are supplied at container runtime by
-# Elastic Beanstalk / Docker.
+# Laravel receives these values from the container runtime.
 #
 # DO NOT put secrets into the Dockerfile.
-# ------------------------------------------------------------
+# ============================================================
 
 RUN cat > /usr/local/etc/php-fpm.d/99-environment.conf <<'EOF'
 [www]
@@ -207,23 +201,26 @@ env[SESSION_DRIVER] = $SESSION_DRIVER
 env[QUEUE_CONNECTION] = $QUEUE_CONNECTION
 EOF
 
+
 # ============================================================
 # NGINX DIRECTORIES
 # ============================================================
 
 RUN mkdir -p \
-    /run/nginx \
-    /var/cache/nginx \
-    /var/log/nginx
+        /run/nginx \
+        /var/cache/nginx \
+        /var/log/nginx
+
 
 # ============================================================
-# NGINX
+# NGINX CONFIGURATION
 # ============================================================
 
 RUN rm -f /etc/nginx/http.d/default.conf
 
 COPY docker/nginx/default.conf \
     /etc/nginx/http.d/default.conf
+
 
 # ============================================================
 # SUPERVISOR
@@ -234,28 +231,34 @@ RUN mkdir -p /etc/supervisor.d
 COPY docker/supervisor/supervisord.conf \
     /etc/supervisord.conf
 
+
 # ============================================================
 # APPLICATION SOURCE
 # ============================================================
 
 COPY . .
 
-# ------------------------------------------------------------
-# Remove any config cache copied from source
-# ------------------------------------------------------------
-
-RUN rm -f \
-    bootstrap/cache/config.php \
-    bootstrap/cache/packages.php \
-    bootstrap/cache/services.php
 
 # ============================================================
-# COMPOSER DEPENDENCIES
+# REMOVE BUILD-TIME LARAVEL CACHE
+#
+# Runtime environment variables must be used.
+# ============================================================
+
+RUN rm -f \
+        bootstrap/cache/config.php \
+        bootstrap/cache/packages.php \
+        bootstrap/cache/services.php
+
+
+# ============================================================
+# COMPOSER VENDOR
 # ============================================================
 
 COPY --from=composer \
     /app/vendor \
     /var/www/html/vendor
+
 
 # ============================================================
 # VITE PRODUCTION BUILD
@@ -265,70 +268,92 @@ COPY --from=frontend \
     /app/public/build \
     /var/www/html/public/build
 
-# ------------------------------------------------------------
-# Never ship development hot file
-# ------------------------------------------------------------
+
+# ============================================================
+# REMOVE VITE HOT FILE
+# ============================================================
 
 RUN rm -f /var/www/html/public/hot
+
 
 # ============================================================
 # LARAVEL DIRECTORIES
 # ============================================================
 
 RUN mkdir -p \
-    storage/framework/cache \
-    storage/framework/sessions \
-    storage/framework/views \
-    storage/logs \
-    bootstrap/cache
+        storage/framework/cache \
+        storage/framework/sessions \
+        storage/framework/views \
+        storage/logs \
+        bootstrap/cache
+
 
 # ============================================================
-# PERMISSIONS
+# LARAVEL PERMISSIONS
 # ============================================================
 
 RUN chown -R www-data:www-data \
-    storage \
-    bootstrap/cache \
-    public
+        storage \
+        bootstrap/cache \
+        public \
+    \
+    && chmod -R 775 \
+        storage \
+        bootstrap/cache
 
-RUN chmod -R 775 \
-    storage \
-    bootstrap/cache
 
 # ============================================================
-# LARAVEL OPTIMIZATION
+# CLEAR LARAVEL CACHE
 #
-# IMPORTANT:
-# Do not run config:cache here.
+# DO NOT RUN config:cache HERE.
 #
-# APP_KEY / DB credentials are supplied at runtime.
+# APP_KEY / DB credentials are runtime values.
 # ============================================================
 
 RUN php artisan optimize:clear
 
+
 # ============================================================
-# BUILD-TIME VALIDATION
+# BUILD VALIDATION
 # ============================================================
 
-RUN echo "======================================"
-RUN echo "LARAVEL BUILD VALIDATION"
-RUN echo "======================================"
+RUN set -eux; \
+    test -f public/index.php; \
+    test -d public/build; \
+    test -f public/build/manifest.json; \
+    test ! -f public/hot
 
-RUN test -f public/index.php
-RUN test -d public/build
-RUN test -f public/build/manifest.json
-RUN test ! -f public/hot
 
-RUN echo "Laravel application: OK"
-RUN echo "Vite build: OK"
-RUN echo "Vite manifest: OK"
-RUN echo "Vite hot file: NOT PRESENT"
+# ============================================================
+# VERIFY PHP EXTENSIONS AGAIN
+# ============================================================
+
+RUN set -eux; \
+    php --version; \
+    php -m | grep -qi '^gd$'; \
+    php -m | grep -qi '^intl$'; \
+    php -m | grep -qi '^zip$'; \
+    php -m | grep -qi '^pdo_mysql$'; \
+    php -m | grep -qi '^mbstring$'; \
+    php -m | grep -qi '^bcmath$'; \
+    php -m | grep -qi '^opcache$'
+
+
+# ============================================================
+# VERIFY EXTENSION DETAILS
+# ============================================================
+
+RUN php --ri gd > /dev/null \
+    && php --ri intl > /dev/null \
+    && php --ri zip > /dev/null
+
 
 # ============================================================
 # NGINX VALIDATION
 # ============================================================
 
 RUN nginx -t
+
 
 # ============================================================
 # RUNTIME ENTRYPOINT
@@ -339,20 +364,23 @@ COPY docker/entrypoint.sh \
 
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
+
 # ============================================================
-# REMOVE UNNECESSARY FILES
+# CLEANUP
 # ============================================================
 
 RUN rm -rf \
-    /tmp/* \
-    /root/.cache \
-    /root/.composer
+        /tmp/* \
+        /root/.cache \
+        /root/.composer
+
 
 # ============================================================
 # PORT
 # ============================================================
 
 EXPOSE 80
+
 
 # ============================================================
 # START
