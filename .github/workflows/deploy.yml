@@ -6,8 +6,11 @@ on:
       - main
 
 permissions:
-  id-token: write
   contents: read
+
+concurrency:
+  group: production-deployment
+  cancel-in-progress: false
 
 jobs:
 
@@ -31,15 +34,30 @@ jobs:
     env:
       AWS_REGION: ${{ secrets.AWS_REGION }}
 
+      # ========================================================
       # ECR
+      # ========================================================
+
       ECR_REPOSITORY: lara-aws-tf-prod-laravel
 
-      # Elastic Beanstalk
+      # ========================================================
+      # ELASTIC BEANSTALK
+      # ========================================================
+
       EB_APPLICATION: lara-aws-tf-prod
       EB_ENVIRONMENT: lara-aws-tf-prod-env
 
+      # ========================================================
       # S3
+      # ========================================================
+
       EB_S3_BUCKET: lara-aws-tf-prod
+
+      # ========================================================
+      # IMAGE
+      # ========================================================
+
+      IMAGE_TAG: ${{ github.sha }}
 
     steps:
 
@@ -68,12 +86,15 @@ jobs:
       # ==========================================================
 
       - name: Verify AWS identity
+        shell: bash
         run: |
+          set -euo pipefail
+
           echo "======================================"
           echo "AWS IDENTITY"
           echo "======================================"
 
-          aws sts get-caller-identity
+          aws sts get-caller-identity --no-cli-pager
 
 
       # ==========================================================
@@ -86,32 +107,55 @@ jobs:
 
 
       # ==========================================================
-      # IMAGE TAG
+      # IMAGE INFORMATION
       # ==========================================================
 
-      - name: Set image tag
+      - name: Set image information
+        shell: bash
         run: |
-          echo "IMAGE_TAG=${GITHUB_SHA}" >> "$GITHUB_ENV"
+          set -euo pipefail
+
+          IMAGE="${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
 
           echo "======================================"
-          echo "IMAGE TAG"
+          echo "IMAGE INFORMATION"
           echo "======================================"
-          echo "$GITHUB_SHA"
+
+          echo "Repository:"
+          echo "$ECR_REPOSITORY"
+
+          echo
+          echo "Tag:"
+          echo "$IMAGE_TAG"
+
+          echo
+          echo "Full image:"
+          echo "$IMAGE"
+
+
+      # ==========================================================
+      # SETUP BUILDX
+      # ==========================================================
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
 
       # ==========================================================
       # BUILD DOCKER IMAGE
       #
-      # Vite is built INSIDE Docker.
+      # Vite is built inside Docker.
       #
-      # Node is only used in the frontend build stage.
-      # Node does NOT need to run in production.
+      # Node is only required by the frontend build stage.
+      # Node does NOT need to exist in the production runtime.
       # ==========================================================
 
       - name: Build Docker image
+        shell: bash
         run: |
-
-          IMAGE="${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          set -euo pipefail
 
           echo "======================================"
           echo "BUILDING DOCKER IMAGE"
@@ -120,9 +164,8 @@ jobs:
           echo "$IMAGE"
 
           docker build \
-            --no-cache \
             --pull \
-            -t "$IMAGE" \
+            --tag "$IMAGE" \
             .
 
 
@@ -131,15 +174,26 @@ jobs:
       # ==========================================================
 
       - name: Inspect Docker image
+        shell: bash
         run: |
-
-          IMAGE="${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          set -euo pipefail
 
           echo "======================================"
           echo "IMAGE"
           echo "======================================"
 
           echo "$IMAGE"
+
+
+          # ------------------------------------------------------
+          # IMAGE INFORMATION
+          # ------------------------------------------------------
+
+          echo "======================================"
+          echo "DOCKER IMAGE INSPECT"
+          echo "======================================"
+
+          docker image inspect "$IMAGE"
 
 
           # ------------------------------------------------------
@@ -178,6 +232,7 @@ jobs:
             sh -c '
               if [ -d /var/www/html/public/build ]; then
                 echo "Vite build directory: PRESENT"
+
                 find /var/www/html/public/build \
                   -maxdepth 2 \
                   -type f \
@@ -230,8 +285,12 @@ jobs:
 
           docker run --rm "$IMAGE" \
             sh -c '
-              echo "--- 99-environment.conf ---"
-              cat /usr/local/etc/php-fpm.d/99-environment.conf
+              if [ -f /usr/local/etc/php-fpm.d/99-environment.conf ]; then
+                echo "--- 99-environment.conf ---"
+                cat /usr/local/etc/php-fpm.d/99-environment.conf
+              else
+                echo "99-environment.conf not present"
+              fi
             '
 
 
@@ -279,9 +338,30 @@ jobs:
       # ==========================================================
 
       - name: Test Docker container
+        shell: bash
         run: |
+          set -euo pipefail
 
-          IMAGE="${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          CONTAINER_NAME="laravel-test"
+          HOST_PORT="8080"
+
+          # ------------------------------------------------------
+          # ALWAYS CLEAN UP
+          # ------------------------------------------------------
+
+          cleanup() {
+            echo
+            echo "======================================"
+            echo "CLEANUP TEST CONTAINER"
+            echo "======================================"
+
+            docker logs "$CONTAINER_NAME" 2>/dev/null || true
+
+            docker stop "$CONTAINER_NAME" 2>/dev/null || true
+            docker rm "$CONTAINER_NAME" 2>/dev/null || true
+          }
+
+          trap cleanup EXIT
 
 
           # ------------------------------------------------------
@@ -293,17 +373,54 @@ jobs:
           echo "======================================"
 
           docker run -d \
-            --name laravel-test \
-            -p 8080:80 \
+            --name "$CONTAINER_NAME" \
+            -p "${HOST_PORT}:80" \
             -e APP_ENV=production \
             -e APP_DEBUG=false \
             -e APP_KEY="${{ secrets.APP_KEY }}" \
             "$IMAGE"
 
 
-          echo "Waiting for container..."
+          # ------------------------------------------------------
+          # WAIT FOR CONTAINER
+          # ------------------------------------------------------
 
-          sleep 10
+          echo "======================================"
+          echo "WAITING FOR CONTAINER"
+          echo "======================================"
+
+          MAX_ATTEMPTS=30
+          ATTEMPT=1
+
+          until curl \
+            --silent \
+            --show-error \
+            --fail \
+            "http://localhost:${HOST_PORT}/" \
+            > /dev/null
+          do
+            if [ "$ATTEMPT" -ge "$MAX_ATTEMPTS" ]; then
+              echo "Application did not become ready."
+
+              echo
+              echo "Container status:"
+              docker ps -a
+
+              echo
+              echo "Container logs:"
+              docker logs "$CONTAINER_NAME" || true
+
+              exit 1
+            fi
+
+            echo "Waiting for application... attempt ${ATTEMPT}/${MAX_ATTEMPTS}"
+
+            sleep 2
+
+            ATTEMPT=$((ATTEMPT + 1))
+          done
+
+          echo "Application is responding."
 
 
           # ------------------------------------------------------
@@ -325,7 +442,7 @@ jobs:
           echo "CONTAINER LOGS"
           echo "======================================"
 
-          docker logs laravel-test || true
+          docker logs "$CONTAINER_NAME"
 
 
           # ------------------------------------------------------
@@ -336,7 +453,7 @@ jobs:
           echo "APP KEY ENVIRONMENT"
           echo "======================================"
 
-          docker exec laravel-test \
+          docker exec "$CONTAINER_NAME" \
             sh -c '
               if [ -n "$APP_KEY" ]; then
                 echo "APP_KEY: PRESENT"
@@ -356,7 +473,7 @@ jobs:
           echo "PHP CAN READ APP_KEY"
           echo "======================================"
 
-          docker exec laravel-test \
+          docker exec "$CONTAINER_NAME" \
             php -r '
               $key = getenv("APP_KEY");
 
@@ -378,7 +495,7 @@ jobs:
           echo "PHP-FPM CLEAR_ENV"
           echo "======================================"
 
-          docker exec laravel-test \
+          docker exec "$CONTAINER_NAME" \
             sh -c '
               php-fpm -i | grep -i "clear_env" || true
             '
@@ -392,8 +509,10 @@ jobs:
           echo "VITE BUILD INSIDE CONTAINER"
           echo "======================================"
 
-          docker exec laravel-test \
+          docker exec "$CONTAINER_NAME" \
             sh -c '
+              test -d /var/www/html/public/build
+
               find /var/www/html/public/build \
                 -maxdepth 2 \
                 -type f \
@@ -409,7 +528,7 @@ jobs:
           echo "VITE MANIFEST"
           echo "======================================"
 
-          docker exec laravel-test \
+          docker exec "$CONTAINER_NAME" \
             sh -c '
               test -f /var/www/html/public/build/manifest.json
             '
@@ -425,22 +544,20 @@ jobs:
           echo "LARAVEL ABOUT"
           echo "======================================"
 
-          docker exec laravel-test \
-            php artisan about \
-            || true
+          docker exec "$CONTAINER_NAME" \
+            php artisan about
 
 
           # ------------------------------------------------------
-          # LARAVEL CONFIG
+          # LARAVEL APP CONFIG
           # ------------------------------------------------------
 
           echo "======================================"
           echo "LARAVEL APP CONFIG"
           echo "======================================"
 
-          docker exec laravel-test \
-            php artisan config:show app \
-            || true
+          docker exec "$CONTAINER_NAME" \
+            php artisan config:show app
 
 
           # ------------------------------------------------------
@@ -451,10 +568,11 @@ jobs:
           echo "NGINX TEST"
           echo "======================================"
 
-          curl -i \
+          curl \
             --fail-with-body \
-            http://localhost:8080/nginx-test \
-            || true
+            --show-error \
+            --silent \
+            "http://localhost:${HOST_PORT}/nginx-test"
 
 
           # ------------------------------------------------------
@@ -465,10 +583,11 @@ jobs:
           echo "HOME PAGE"
           echo "======================================"
 
-          curl -i \
+          curl \
             --fail-with-body \
-            http://localhost:8080/ \
-            || true
+            --show-error \
+            --silent \
+            "http://localhost:${HOST_PORT}/"
 
 
           # ------------------------------------------------------
@@ -479,10 +598,12 @@ jobs:
           echo "LOGIN PAGE"
           echo "======================================"
 
-          curl -s \
-            http://localhost:8080/login \
-            -o /tmp/login.html \
-            || true
+          curl \
+            --fail-with-body \
+            --show-error \
+            --silent \
+            "http://localhost:${HOST_PORT}/login" \
+            -o /tmp/login.html
 
           echo "Login page saved to /tmp/login.html"
 
@@ -525,7 +646,7 @@ jobs:
           echo "PUBLIC DIRECTORY"
           echo "======================================"
 
-          docker exec laravel-test \
+          docker exec "$CONTAINER_NAME" \
             sh -c 'ls -la /var/www/html/public'
 
 
@@ -537,8 +658,8 @@ jobs:
           echo "INDEX.PHP"
           echo "======================================"
 
-          docker exec laravel-test \
-            sh -c 'ls -la /var/www/html/public/index.php'
+          docker exec "$CONTAINER_NAME" \
+            sh -c 'test -f /var/www/html/public/index.php'
 
 
           # ------------------------------------------------------
@@ -549,7 +670,7 @@ jobs:
           echo "LARAVEL LOG"
           echo "======================================"
 
-          docker exec laravel-test \
+          docker exec "$CONTAINER_NAME" \
             sh -c '
               if [ -d /var/www/html/storage/logs ]; then
 
@@ -571,7 +692,7 @@ jobs:
           echo "PHP-FPM PROCESSES"
           echo "======================================"
 
-          docker exec laravel-test \
+          docker exec "$CONTAINER_NAME" \
             sh -c '
               ps aux | grep php-fpm || true
             '
@@ -585,22 +706,10 @@ jobs:
           echo "NGINX PROCESSES"
           echo "======================================"
 
-          docker exec laravel-test \
+          docker exec "$CONTAINER_NAME" \
             sh -c '
               ps aux | grep nginx || true
             '
-
-
-          # ------------------------------------------------------
-          # STOP TEST CONTAINER
-          # ------------------------------------------------------
-
-          echo "======================================"
-          echo "STOP TEST CONTAINER"
-          echo "======================================"
-
-          docker stop laravel-test || true
-          docker rm laravel-test || true
 
 
       # ==========================================================
@@ -608,9 +717,9 @@ jobs:
       # ==========================================================
 
       - name: Push Docker image
+        shell: bash
         run: |
-
-          IMAGE="${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          set -euo pipefail
 
           echo "======================================"
           echo "PUSHING IMAGE"
@@ -624,7 +733,9 @@ jobs:
       # ==========================================================
 
       - name: Verify ECR image
+        shell: bash
         run: |
+          set -euo pipefail
 
           echo "======================================"
           echo "VERIFY ECR IMAGE"
@@ -633,7 +744,8 @@ jobs:
           aws ecr describe-images \
             --repository-name "$ECR_REPOSITORY" \
             --image-ids imageTag="$IMAGE_TAG" \
-            --region "$AWS_REGION"
+            --region "$AWS_REGION" \
+            --no-cli-pager
 
 
       # ==========================================================
@@ -641,9 +753,9 @@ jobs:
       # ==========================================================
 
       - name: Create Dockerrun.aws.json
+        shell: bash
         run: |
-
-          IMAGE="${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          set -euo pipefail
 
           echo "======================================"
           echo "DOCKER IMAGE"
@@ -680,7 +792,9 @@ jobs:
       # ==========================================================
 
       - name: Validate Dockerrun
+        shell: bash
         run: |
+          set -euo pipefail
 
           echo "======================================"
           echo "VALIDATING DOCKERRUN"
@@ -694,7 +808,9 @@ jobs:
       # ==========================================================
 
       - name: Create deployment package
+        shell: bash
         run: |
+          set -euo pipefail
 
           echo "======================================"
           echo "CREATING DEPLOYMENT PACKAGE"
@@ -717,7 +833,9 @@ jobs:
       # ==========================================================
 
       - name: Upload deployment package to S3
+        shell: bash
         run: |
+          set -euo pipefail
 
           echo "======================================"
           echo "UPLOAD TO S3"
@@ -725,7 +843,8 @@ jobs:
 
           aws s3 cp \
             deployment.zip \
-            "s3://${EB_S3_BUCKET}/deployments/${IMAGE_TAG}.zip"
+            "s3://${EB_S3_BUCKET}/deployments/${IMAGE_TAG}.zip" \
+            --no-cli-pager
 
 
           echo "======================================"
@@ -740,14 +859,18 @@ jobs:
       # ==========================================================
 
       - name: Verify S3 package
+        shell: bash
         run: |
+          set -euo pipefail
 
           echo "======================================"
           echo "VERIFY S3 PACKAGE"
           echo "======================================"
 
-          aws s3 ls \
-            "s3://${EB_S3_BUCKET}/deployments/${IMAGE_TAG}.zip"
+          aws s3api head-object \
+            --bucket "$EB_S3_BUCKET" \
+            --key "deployments/${IMAGE_TAG}.zip" \
+            --no-cli-pager
 
 
       # ==========================================================
@@ -755,7 +878,9 @@ jobs:
       # ==========================================================
 
       - name: Create Elastic Beanstalk application version
+        shell: bash
         run: |
+          set -euo pipefail
 
           echo "======================================"
           echo "CREATE EB APPLICATION VERSION"
@@ -765,7 +890,9 @@ jobs:
             --application-name "$EB_APPLICATION" \
             --version-label "$IMAGE_TAG" \
             --source-bundle \
-              "S3Bucket=${EB_S3_BUCKET},S3Key=deployments/${IMAGE_TAG}.zip"
+              "S3Bucket=${EB_S3_BUCKET},S3Key=deployments/${IMAGE_TAG}.zip" \
+            --process \
+            --no-cli-pager
 
 
       # ==========================================================
@@ -773,7 +900,9 @@ jobs:
       # ==========================================================
 
       - name: Deploy to Elastic Beanstalk
+        shell: bash
         run: |
+          set -euo pipefail
 
           echo "======================================"
           echo "DEPLOY TO ELASTIC BEANSTALK"
@@ -782,7 +911,8 @@ jobs:
           aws elasticbeanstalk update-environment \
             --application-name "$EB_APPLICATION" \
             --environment-name "$EB_ENVIRONMENT" \
-            --version-label "$IMAGE_TAG"
+            --version-label "$IMAGE_TAG" \
+            --no-cli-pager
 
 
       # ==========================================================
@@ -790,14 +920,17 @@ jobs:
       # ==========================================================
 
       - name: Wait for Elastic Beanstalk deployment
+        shell: bash
         run: |
+          set -euo pipefail
 
           echo "======================================"
           echo "WAITING FOR ELASTIC BEANSTALK"
           echo "======================================"
 
           aws elasticbeanstalk wait environment-updated \
-            --environment-name "$EB_ENVIRONMENT"
+            --environment-name "$EB_ENVIRONMENT" \
+            --no-cli-pager
 
 
       # ==========================================================
@@ -805,7 +938,9 @@ jobs:
       # ==========================================================
 
       - name: Verify Elastic Beanstalk deployment
+        shell: bash
         run: |
+          set -euo pipefail
 
           echo "======================================"
           echo "ELASTIC BEANSTALK STATUS"
@@ -815,7 +950,73 @@ jobs:
             --application-name "$EB_APPLICATION" \
             --environment-names "$EB_ENVIRONMENT" \
             --query 'Environments[0].[EnvironmentName,VersionLabel,Status,Health,HealthStatus,CNAME]' \
-            --output table
+            --output table \
+            --no-cli-pager
+
+
+          STATUS=$(aws elasticbeanstalk describe-environments \
+            --application-name "$EB_APPLICATION" \
+            --environment-names "$EB_ENVIRONMENT" \
+            --query 'Environments[0].Status' \
+            --output text \
+            --no-cli-pager)
+
+          HEALTH=$(aws elasticbeanstalk describe-environments \
+            --application-name "$EB_APPLICATION" \
+            --environment-names "$EB_ENVIRONMENT" \
+            --query 'Environments[0].Health' \
+            --output text \
+            --no-cli-pager)
+
+          HEALTH_STATUS=$(aws elasticbeanstalk describe-environments \
+            --application-name "$EB_APPLICATION" \
+            --environment-names "$EB_ENVIRONMENT" \
+            --query 'Environments[0].HealthStatus' \
+            --output text \
+            --no-cli-pager)
+
+          VERSION=$(aws elasticbeanstalk describe-environments \
+            --application-name "$EB_APPLICATION" \
+            --environment-names "$EB_ENVIRONMENT" \
+            --query 'Environments[0].VersionLabel' \
+            --output text \
+            --no-cli-pager)
+
+
+          echo
+          echo "Status:        $STATUS"
+          echo "Health:        $HEALTH"
+          echo "Health status: $HEALTH_STATUS"
+          echo "Version:       $VERSION"
+
+
+          if [ "$STATUS" != "Ready" ]; then
+            echo
+            echo "ERROR: Elastic Beanstalk environment is not Ready."
+            exit 1
+          fi
+
+
+          if [ "$VERSION" != "$IMAGE_TAG" ]; then
+            echo
+            echo "ERROR: Elastic Beanstalk is running an unexpected version."
+            echo "Expected: $IMAGE_TAG"
+            echo "Actual:   $VERSION"
+            exit 1
+          fi
+
+
+          case "$HEALTH" in
+            Green|Yellow)
+              echo
+              echo "Elastic Beanstalk health: ACCEPTED ($HEALTH)"
+              ;;
+            *)
+              echo
+              echo "ERROR: Elastic Beanstalk health is $HEALTH"
+              exit 1
+              ;;
+          esac
 
 
       # ==========================================================
@@ -824,7 +1025,9 @@ jobs:
 
       - name: Show Elastic Beanstalk events
         if: always()
+        shell: bash
         run: |
+          set +e
 
           echo "======================================"
           echo "ELASTIC BEANSTALK EVENTS"
@@ -834,4 +1037,46 @@ jobs:
             --environment-name "$EB_ENVIRONMENT" \
             --max-items 30 \
             --query 'Events[*].[EventDate,Severity,Status,Message]' \
-            --output table
+            --output table \
+            --no-cli-pager
+
+
+      # ==========================================================
+      # FINAL DEPLOYMENT SUMMARY
+      # ==========================================================
+
+      - name: Deployment summary
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          CNAME=$(aws elasticbeanstalk describe-environments \
+            --application-name "$EB_APPLICATION" \
+            --environment-names "$EB_ENVIRONMENT" \
+            --query 'Environments[0].CNAME' \
+            --output text \
+            --no-cli-pager)
+
+          echo "======================================"
+          echo "DEPLOYMENT SUCCESSFUL"
+          echo "======================================"
+
+          echo
+          echo "Application:"
+          echo "$EB_APPLICATION"
+
+          echo
+          echo "Environment:"
+          echo "$EB_ENVIRONMENT"
+
+          echo
+          echo "Version:"
+          echo "$IMAGE_TAG"
+
+          echo
+          echo "Docker image:"
+          echo "$IMAGE"
+
+          echo
+          echo "Elastic Beanstalk CNAME:"
+          echo "$CNAME"
