@@ -29,7 +29,9 @@ jobs:
 
   deploy:
     runs-on: ubuntu-latest
-    needs: terraform
+
+    needs:
+      - terraform
 
     env:
       AWS_REGION: ${{ secrets.AWS_REGION }}
@@ -44,7 +46,7 @@ jobs:
       # S3
       EB_S3_BUCKET: lara-aws-tf-prod
 
-      # Immutable image/version
+      # Immutable image
       IMAGE_TAG: ${{ github.sha }}
 
     steps:
@@ -55,6 +57,78 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v4
+
+
+      # ========================================================
+      # VERIFY REQUIRED SECRETS
+      # ========================================================
+
+      - name: Verify application secrets
+        shell: bash
+        env:
+          APP_KEY: ${{ secrets.APP_KEY }}
+          APP_URL: ${{ secrets.APP_URL }}
+        run: |
+          set -euo pipefail
+
+          echo "======================================"
+          echo "VERIFY APPLICATION SECRETS"
+          echo "======================================"
+
+          if [ -z "$APP_KEY" ]; then
+            echo "ERROR: APP_KEY GitHub secret is missing."
+            exit 1
+          fi
+
+          if [ -z "$APP_URL" ]; then
+            echo "ERROR: APP_URL GitHub secret is missing."
+            exit 1
+          fi
+
+          echo "APP_KEY: PRESENT"
+          echo "APP_KEY length: ${#APP_KEY}"
+          echo "APP_URL: PRESENT"
+
+
+      # ========================================================
+      # VERIFY DATABASE SECRETS
+      # ========================================================
+
+      - name: Verify database secrets
+        shell: bash
+        env:
+          DB_CONNECTION: ${{ secrets.DB_CONNECTION }}
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_DATABASE: ${{ secrets.DB_DATABASE }}
+          DB_USERNAME: ${{ secrets.DB_USERNAME }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          echo "======================================"
+          echo "VERIFY DATABASE SECRETS"
+          echo "======================================"
+
+          for name in \
+            DB_CONNECTION \
+            DB_HOST \
+            DB_PORT \
+            DB_DATABASE \
+            DB_USERNAME \
+            DB_PASSWORD
+          do
+
+            value="${!name:-}"
+
+            if [ -z "$value" ]; then
+              echo "ERROR: $name GitHub secret is missing."
+              exit 1
+            fi
+
+            echo "$name: PRESENT"
+
+          done
 
 
       # ========================================================
@@ -157,10 +231,6 @@ jobs:
           docker image inspect "$IMAGE"
 
 
-          # ----------------------------------------------------
-          # PUBLIC
-          # ----------------------------------------------------
-
           echo "======================================"
           echo "PUBLIC DIRECTORY"
           echo "======================================"
@@ -168,10 +238,6 @@ jobs:
           docker run --rm "$IMAGE" \
             sh -c 'ls -la /var/www/html/public'
 
-
-          # ----------------------------------------------------
-          # INDEX
-          # ----------------------------------------------------
 
           echo "======================================"
           echo "INDEX.PHP"
@@ -181,10 +247,6 @@ jobs:
             sh -c 'test -f /var/www/html/public/index.php'
 
 
-          # ----------------------------------------------------
-          # VITE BUILD
-          # ----------------------------------------------------
-
           echo "======================================"
           echo "VITE BUILD"
           echo "======================================"
@@ -193,33 +255,14 @@ jobs:
             sh -c '
               test -d /var/www/html/public/build
 
+              test -f /var/www/html/public/build/manifest.json
+
               find /var/www/html/public/build \
-                -maxdepth 2 \
+                -maxdepth 3 \
                 -type f \
                 -print
             '
 
-
-          # ----------------------------------------------------
-          # VITE MANIFEST
-          # ----------------------------------------------------
-
-          echo "======================================"
-          echo "VITE MANIFEST"
-          echo "======================================"
-
-          docker run --rm "$IMAGE" \
-            sh -c '
-              test -f /var/www/html/public/build/manifest.json
-
-              echo "Vite manifest:"
-              cat /var/www/html/public/build/manifest.json
-            '
-
-
-          # ----------------------------------------------------
-          # CRITICAL: HOT FILE
-          # ----------------------------------------------------
 
           echo "======================================"
           echo "VITE HOT FILE"
@@ -229,18 +272,12 @@ jobs:
             sh -c '
               if [ -f /var/www/html/public/hot ]; then
                 echo "ERROR: public/hot exists."
-                echo
-                cat /var/www/html/public/hot
                 exit 1
               fi
 
               echo "Vite hot file: NOT PRESENT"
             '
 
-
-          # ----------------------------------------------------
-          # SEARCH FOR LOCAL VITE SERVER
-          # ----------------------------------------------------
 
           echo "======================================"
           echo "SEARCH FOR VITE DEV SERVER"
@@ -265,26 +302,22 @@ jobs:
             '
 
 
-          # ----------------------------------------------------
-          # PHP-FPM
-          # ----------------------------------------------------
-
           echo "======================================"
-          echo "PHP-FPM ENVIRONMENT CONFIG"
+          echo "NGINX CONFIGURATION"
           echo "======================================"
 
-          docker run --rm "$IMAGE" \
-            sh -c '
-              cat /usr/local/etc/php-fpm.d/99-environment.conf
-            '
+          docker run --rm "$IMAGE" nginx -t
 
-
-          # ----------------------------------------------------
-          # PHP-FPM CLEAR_ENV
-          # ----------------------------------------------------
 
           echo "======================================"
-          echo "PHP-FPM CLEAR_ENV"
+          echo "NGINX CONFIGURATION"
+          echo "======================================"
+
+          docker run --rm "$IMAGE" nginx -T
+
+
+          echo "======================================"
+          echo "PHP-FPM CONFIGURATION"
           echo "======================================"
 
           docker run --rm "$IMAGE" \
@@ -295,27 +328,12 @@ jobs:
             '
 
 
-          # ----------------------------------------------------
-          # ENTRYPOINT
-          # ----------------------------------------------------
-
           echo "======================================"
           echo "ENTRYPOINT"
           echo "======================================"
 
           docker run --rm "$IMAGE" \
             sh -c 'cat /usr/local/bin/entrypoint.sh'
-
-
-          # ----------------------------------------------------
-          # NGINX
-          # ----------------------------------------------------
-
-          echo "======================================"
-          echo "NGINX CONFIGURATION"
-          echo "======================================"
-
-          docker run --rm "$IMAGE" nginx -T
 
 
       # ========================================================
@@ -346,7 +364,7 @@ jobs:
 
 
           # ----------------------------------------------------
-          # START
+          # START CONTAINER
           # ----------------------------------------------------
 
           echo "======================================"
@@ -360,11 +378,17 @@ jobs:
             -e APP_DEBUG=false \
             -e APP_KEY="${{ secrets.APP_KEY }}" \
             -e APP_URL="${{ secrets.APP_URL }}" \
+            -e DB_CONNECTION="${{ secrets.DB_CONNECTION }}" \
+            -e DB_HOST="${{ secrets.DB_HOST }}" \
+            -e DB_PORT="${{ secrets.DB_PORT }}" \
+            -e DB_DATABASE="${{ secrets.DB_DATABASE }}" \
+            -e DB_USERNAME="${{ secrets.DB_USERNAME }}" \
+            -e DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
             "$IMAGE"
 
 
           # ----------------------------------------------------
-          # WAIT
+          # WAIT FOR APPLICATION
           # ----------------------------------------------------
 
           echo "======================================"
@@ -402,6 +426,7 @@ jobs:
             sleep 2
 
             ATTEMPT=$((ATTEMPT + 1))
+
           done
 
           echo "Application is ready."
@@ -447,7 +472,33 @@ jobs:
 
 
           # ----------------------------------------------------
-          # HOT FILE
+          # DATABASE ENVIRONMENT
+          # ----------------------------------------------------
+
+          echo "======================================"
+          echo "DATABASE ENVIRONMENT"
+          echo "======================================"
+
+          docker exec "$CONTAINER_NAME" \
+            sh -c '
+              test -n "$DB_CONNECTION"
+              test -n "$DB_HOST"
+              test -n "$DB_PORT"
+              test -n "$DB_DATABASE"
+              test -n "$DB_USERNAME"
+              test -n "$DB_PASSWORD"
+
+              echo "DB_CONNECTION: PRESENT"
+              echo "DB_HOST: PRESENT"
+              echo "DB_PORT: PRESENT"
+              echo "DB_DATABASE: PRESENT"
+              echo "DB_USERNAME: PRESENT"
+              echo "DB_PASSWORD: PRESENT"
+            '
+
+
+          # ----------------------------------------------------
+          # VITE HOT FILE
           # ----------------------------------------------------
 
           echo "======================================"
@@ -492,7 +543,7 @@ jobs:
           docker exec "$CONTAINER_NAME" \
             sh -c '
               find /var/www/html/public/build \
-                -maxdepth 2 \
+                -maxdepth 3 \
                 -type f \
                 -print
             '
@@ -523,7 +574,7 @@ jobs:
 
 
           # ----------------------------------------------------
-          # HOME
+          # HOME PAGE
           # ----------------------------------------------------
 
           echo "======================================"
@@ -538,7 +589,7 @@ jobs:
 
 
           # ----------------------------------------------------
-          # LOGIN
+          # LOGIN PAGE
           # ----------------------------------------------------
 
           echo
@@ -562,8 +613,6 @@ jobs:
           echo "VITE URL CHECK"
           echo "======================================"
 
-          echo "Vite references found in login page:"
-
           grep -Eo \
             'https?://[^"]+|/build/[^"]+\.(js|css)' \
             /tmp/login.html \
@@ -584,9 +633,8 @@ jobs:
 
             echo
             echo "ERROR:"
-            echo "Production Laravel page references Vite dev server."
+            echo "Production page references Vite dev server."
 
-            echo
             grep -E \
               'localhost:5173|127\.0\.0\.1:5173|\[::1\]:5173' \
               /tmp/login.html
@@ -598,29 +646,11 @@ jobs:
 
 
           # ----------------------------------------------------
-          # CHECK BUILD REFERENCES
+          # CHECK PRODUCTION ASSETS
           # ----------------------------------------------------
 
           echo "======================================"
           echo "CHECK PRODUCTION VITE REFERENCES"
-          echo "======================================"
-
-          if ! grep -Eq \
-            '/build/[^"]+\.(js|css)' \
-            /tmp/login.html; then
-
-            echo "WARNING: No /build/*.js or /build/*.css references found."
-          else
-            echo "Production Vite references detected."
-          fi
-
-
-          # ----------------------------------------------------
-          # CHECK ASSET HTTP STATUS
-          # ----------------------------------------------------
-
-          echo "======================================"
-          echo "CHECK VITE ASSETS"
           echo "======================================"
 
           ASSETS=$(grep -Eo \
@@ -629,8 +659,12 @@ jobs:
             | sort -u || true)
 
           if [ -z "$ASSETS" ]; then
-            echo "No Vite assets found in page."
+
+            echo "WARNING: No /build/*.js or /build/*.css references found."
+
           else
+
+            echo "Production Vite assets detected."
 
             while IFS= read -r ASSET; do
 
@@ -655,23 +689,7 @@ jobs:
 
 
           # ----------------------------------------------------
-          # NGINX TEST
-          # ----------------------------------------------------
-
-          echo "======================================"
-          echo "NGINX TEST"
-          echo "======================================"
-
-          curl \
-            --fail-with-body \
-            --show-error \
-            --silent \
-            "http://localhost:${HOST_PORT}/nginx-test" \
-            || true
-
-
-          # ----------------------------------------------------
-          # PUBLIC
+          # PUBLIC DIRECTORY
           # ----------------------------------------------------
 
           echo "======================================"
@@ -683,7 +701,7 @@ jobs:
 
 
           # ----------------------------------------------------
-          # LOGS
+          # LARAVEL LOG
           # ----------------------------------------------------
 
           echo "======================================"
@@ -929,12 +947,14 @@ jobs:
             --output text \
             --no-cli-pager)
 
+
           HEALTH=$(aws elasticbeanstalk describe-environments \
             --application-name "$EB_APPLICATION" \
             --environment-names "$EB_ENVIRONMENT" \
             --query 'Environments[0].Health' \
             --output text \
             --no-cli-pager)
+
 
           VERSION=$(aws elasticbeanstalk describe-environments \
             --application-name "$EB_APPLICATION" \

@@ -1,19 +1,13 @@
-#!/bin/sh
+#!/bin/bash
 
-set -eu
+set -e
 
 echo "======================================"
 echo "LARAVEL CONTAINER STARTING"
 echo "======================================"
 
 # ------------------------------------------------------------
-# Production safety
-# ------------------------------------------------------------
-
-rm -f /var/www/html/public/hot
-
-# ------------------------------------------------------------
-# Verify APP_KEY
+# Required environment
 # ------------------------------------------------------------
 
 if [ -z "${APP_KEY:-}" ]; then
@@ -22,26 +16,22 @@ if [ -z "${APP_KEY:-}" ]; then
 fi
 
 echo "APP_KEY: PRESENT"
+echo "APP_KEY length: ${#APP_KEY}"
 
-# ------------------------------------------------------------
-# Verify Vite production build
-# ------------------------------------------------------------
-
-if [ ! -f /var/www/html/public/build/manifest.json ]; then
-    echo "ERROR: Vite manifest is missing."
-    exit 1
+if [ -z "${APP_ENV:-}" ]; then
+    echo "WARNING: APP_ENV is not set."
+else
+    echo "APP_ENV: ${APP_ENV}"
 fi
 
-if [ -f /var/www/html/public/hot ]; then
-    echo "ERROR: Vite hot file exists."
-    exit 1
+if [ -z "${APP_URL:-}" ]; then
+    echo "WARNING: APP_URL is not set."
+else
+    echo "APP_URL: ${APP_URL}"
 fi
 
-echo "Vite production build: PRESENT"
-echo "Vite hot file: NOT PRESENT"
-
 # ------------------------------------------------------------
-# Laravel storage
+# Laravel writable directories
 # ------------------------------------------------------------
 
 mkdir -p \
@@ -55,22 +45,34 @@ chown -R www-data:www-data \
     /var/www/html/storage \
     /var/www/html/bootstrap/cache
 
+chmod -R 775 \
+    /var/www/html/storage \
+    /var/www/html/bootstrap/cache
+
 # ------------------------------------------------------------
-# Laravel migrations
-#
-# Uncomment only if you want every EB container startup
-# to execute migrations.
+# Clear old Laravel caches
 # ------------------------------------------------------------
 
-# php artisan migrate --force
+echo "Clearing Laravel caches..."
+
+php artisan optimize:clear
+
+# ------------------------------------------------------------
+# Optional production config cache
+# ------------------------------------------------------------
+
+echo "Caching Laravel configuration..."
+
+php artisan config:cache
+
+echo "Laravel configuration cached."
 
 # ------------------------------------------------------------
 # Start Supervisor
 # ------------------------------------------------------------
 
 echo "======================================"
-echo "STARTING NGINX + PHP-FPM"
+echo "STARTING SUPERVISOR"
 echo "======================================"
 
-exec /usr/bin/supervisord \
-    -c /etc/supervisord.conf
+exec "$@"
