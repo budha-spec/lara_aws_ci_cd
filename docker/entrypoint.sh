@@ -14,6 +14,9 @@ fi
 echo "APP_KEY: PRESENT"
 echo "APP_ENV: ${APP_ENV:-not-set}"
 
+# Run migration
+php artisan migrate --force
+
 # Clear runtime caches
 php artisan optimize:clear
 

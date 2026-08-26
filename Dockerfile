@@ -169,30 +169,13 @@ RUN sed -i \
 # PHP-FPM ENVIRONMENT
 # ============================================================
 
-RUN cat > /usr/local/etc/php-fpm.d/99-environment.conf <<'EOF'
-[www]
+RUN sed -i \
+    's|^;clear_env = no|clear_env = no|' \
+    /usr/local/etc/php-fpm.d/www.conf
 
-clear_env = no
-
-env[APP_ENV] = $APP_ENV
-env[APP_DEBUG] = $APP_DEBUG
-env[APP_KEY] = $APP_KEY
-env[APP_URL] = $APP_URL
-
-env[LOG_CHANNEL] = $LOG_CHANNEL
-env[LOG_LEVEL] = $LOG_LEVEL
-
-env[DB_CONNECTION] = $DB_CONNECTION
-env[DB_HOST] = $DB_HOST
-env[DB_PORT] = $DB_PORT
-env[DB_DATABASE] = $DB_DATABASE
-env[DB_USERNAME] = $DB_USERNAME
-env[DB_PASSWORD] = $DB_PASSWORD
-
-env[CACHE_STORE] = $CACHE_STORE
-env[SESSION_DRIVER] = $SESSION_DRIVER
-env[QUEUE_CONNECTION] = $QUEUE_CONNECTION
-EOF
+RUN sed -i \
+    's|^clear_env = yes|clear_env = no|' \
+    /usr/local/etc/php-fpm.d/www.conf
 
 
 # ============================================================
