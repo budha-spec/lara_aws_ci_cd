@@ -33,3 +33,8 @@ variable "create_bucket" {
   type    = bool
   default = true
 }
+
+variable "app_url" {
+  type = string
+  default = "http://lara-aws-tf-prod-env.eba-sqkhtaba.us-east-1.elasticbeanstalk.com/"
+}

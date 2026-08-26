@@ -58,7 +58,7 @@ resource "aws_elastic_beanstalk_environment" "prod" {
     setting {
       namespace ="aws:elasticbeanstalk:application:environment"
       name = "APP_URL"
-      value = "http://${aws_elastic_beanstalk_environment.prod.cname}"
+      value = var.app_url
     }
 
     setting {
