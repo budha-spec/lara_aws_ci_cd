@@ -7,10 +7,14 @@ FROM node:22-alpine AS frontend
 WORKDIR /app
 
 # ------------------------------------------------------------
-# NPM dependencies
+# Package files
 # ------------------------------------------------------------
 
 COPY package.json package-lock.json ./
+
+# ------------------------------------------------------------
+# Install exact dependencies
+# ------------------------------------------------------------
 
 RUN npm ci
 
@@ -23,21 +27,17 @@ COPY public ./public
 COPY vite.config.js ./
 
 # ------------------------------------------------------------
-# Never use Vite HMR in production
-# ------------------------------------------------------------
-
-RUN rm -f public/hot
-
-# ------------------------------------------------------------
-# Production build
+# Production Vite build
 # ------------------------------------------------------------
 
 ENV NODE_ENV=production
 
+RUN rm -f /app/public/hot
+
 RUN npm run build
 
 # ------------------------------------------------------------
-# Verify Vite build
+# Verify Vite output
 # ------------------------------------------------------------
 
 RUN echo "======================================"
@@ -45,13 +45,15 @@ RUN echo "VITE BUILD OUTPUT"
 RUN echo "======================================"
 
 RUN find /app/public/build \
-    -maxdepth 3 \
+    -maxdepth 4 \
     -type f \
     -print \
     | sort
 
 RUN test -d /app/public/build
+
 RUN test -f /app/public/build/manifest.json
+
 RUN test ! -f /app/public/hot
 
 RUN echo "Vite build: OK"
@@ -60,34 +62,7 @@ RUN echo "Vite hot file: NOT PRESENT"
 
 
 # ============================================================
-# STAGE 2: COMPOSER DEPENDENCIES
-# ============================================================
-
-FROM composer:2 AS composer
-
-WORKDIR /app
-
-# ------------------------------------------------------------
-# Composer files
-# ------------------------------------------------------------
-
-COPY composer.json composer.lock ./
-
-# ------------------------------------------------------------
-# Production dependencies
-# ------------------------------------------------------------
-
-RUN composer install \
-    --no-dev \
-    --prefer-dist \
-    --optimize-autoloader \
-    --no-interaction \
-    --no-progress \
-    --no-scripts
-
-
-# ============================================================
-# STAGE 3: PRODUCTION APPLICATION
+# STAGE 2: PHP + NGINX
 # ============================================================
 
 FROM php:8.3-fpm
@@ -98,24 +73,28 @@ WORKDIR /var/www/html
 # SYSTEM PACKAGES
 # ============================================================
 
-RUN apt-get update && apt-get install -y \
-    nginx \
-    supervisor \
-    git \
-    unzip \
-    curl \
-    libzip-dev \
-    libpng-dev \
-    libjpeg62-turbo-dev \
-    libfreetype6-dev \
-    libicu-dev \
-    libonig-dev \
+RUN apt-get update \
+    && apt-get install -y \
+        nginx \
+        supervisor \
+        git \
+        unzip \
+        curl \
+        bash \
+        libzip-dev \
+        libpng-dev \
+        libjpeg62-turbo-dev \
+        libfreetype6-dev \
+        libicu-dev \
+        libonig-dev \
+        libpq-dev \
     && docker-php-ext-configure gd \
         --with-freetype \
         --with-jpeg \
     && docker-php-ext-install -j"$(nproc)" \
         pdo \
         pdo_mysql \
+        pdo_pgsql \
         mbstring \
         bcmath \
         gd \
@@ -135,23 +114,6 @@ RUN mv "$PHP_INI_DIR/php.ini-production" \
 
 
 # ============================================================
-# PHP-FPM CONFIGURATION
-# ============================================================
-
-RUN sed -i \
-    's/^;clear_env = no/clear_env = no/' \
-    /usr/local/etc/php-fpm.d/www.conf
-
-RUN sed -i \
-    's/^clear_env = yes/clear_env = no/' \
-    /usr/local/etc/php-fpm.d/www.conf
-
-RUN sed -i \
-    's|^listen = 9000|listen = 127.0.0.1:9000|' \
-    /usr/local/etc/php-fpm.d/www.conf
-
-
-# ============================================================
 # PHP OPCACHE
 # ============================================================
 
@@ -167,16 +129,53 @@ RUN { \
 
 
 # ============================================================
+# PHP-FPM
+# ============================================================
+
+RUN sed -i \
+    's/^;clear_env = no/clear_env = no/' \
+    /usr/local/etc/php-fpm.d/www.conf \
+    || true
+
+RUN sed -i \
+    's/^clear_env = yes/clear_env = no/' \
+    /usr/local/etc/php-fpm.d/www.conf \
+    || true
+
+RUN sed -i \
+    's|^listen = 9000|listen = 127.0.0.1:9000|' \
+    /usr/local/etc/php-fpm.d/www.conf
+
+
+# ============================================================
 # PHP-FPM ENVIRONMENT
 #
-# Important:
-# PHP-FPM workers inherit Docker environment variables.
+# Environment variables are supplied at RUNTIME by
+# Elastic Beanstalk / Docker.
+#
+# DO NOT put secrets into the Docker image.
 # ============================================================
 
 RUN cat > /usr/local/etc/php-fpm.d/99-environment.conf <<'EOF'
 [www]
 
 clear_env = no
+
+env[APP_ENV] = $APP_ENV
+env[APP_DEBUG] = $APP_DEBUG
+env[APP_KEY] = $APP_KEY
+env[APP_URL] = $APP_URL
+
+env[DB_CONNECTION] = $DB_CONNECTION
+env[DB_HOST] = $DB_HOST
+env[DB_PORT] = $DB_PORT
+env[DB_DATABASE] = $DB_DATABASE
+env[DB_USERNAME] = $DB_USERNAME
+env[DB_PASSWORD] = $DB_PASSWORD
+
+env[CACHE_STORE] = $CACHE_STORE
+env[SESSION_DRIVER] = $SESSION_DRIVER
+env[QUEUE_CONNECTION] = $QUEUE_CONNECTION
 EOF
 
 
@@ -262,16 +261,12 @@ server {
     }
 
     # --------------------------------------------------------
-    # Hidden files
+    # Security
     # --------------------------------------------------------
 
     location ~ /\.(?!well-known).* {
         deny all;
     }
-
-    # --------------------------------------------------------
-    # Sensitive files
-    # --------------------------------------------------------
 
     location ~* /(composer\.(json|lock)|package(-lock)?\.json|vite\.config\.(js|ts)|\.env) {
         deny all;
@@ -321,23 +316,42 @@ EOF
 
 
 # ============================================================
-# COPY LARAVEL APPLICATION
+# COMPOSER
 # ============================================================
 
-COPY . /var/www/html
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
-
-# ============================================================
-# COPY COMPOSER DEPENDENCIES
-# ============================================================
-
-COPY --from=composer \
-    /app/vendor \
-    /var/www/html/vendor
+COPY composer.json composer.lock ./
 
 
 # ============================================================
-# COPY VITE BUILD
+# LARAVEL APPLICATION
+# ============================================================
+
+COPY . .
+
+
+# ============================================================
+# REMOVE EXTERNAL CONFIG CACHE
+# ============================================================
+
+RUN rm -f bootstrap/cache/config.php
+
+
+# ============================================================
+# PHP DEPENDENCIES
+# ============================================================
+
+RUN composer install \
+    --no-dev \
+    --prefer-dist \
+    --optimize-autoloader \
+    --no-interaction \
+    --no-progress
+
+
+# ============================================================
+# COPY VITE PRODUCTION BUILD
 # ============================================================
 
 COPY --from=frontend \
@@ -346,32 +360,20 @@ COPY --from=frontend \
 
 
 # ============================================================
-# REMOVE VITE HOT FILE
+# NEVER SHIP VITE HOT FILE
 # ============================================================
 
 RUN rm -f /var/www/html/public/hot
 
 
 # ============================================================
-# REMOVE DEVELOPMENT FILES
+# REMOVE NODE / BUILD FILES
 # ============================================================
 
 RUN rm -rf \
     /var/www/html/node_modules \
-    /var/www/html/.npm \
     /root/.npm \
     /tmp/*
-
-
-# ============================================================
-# REMOVE BUILD-TIME LARAVEL CONFIG CACHE
-#
-# Runtime environment variables are NOT available during
-# Docker build.
-# ============================================================
-
-RUN rm -f \
-    /var/www/html/bootstrap/cache/config.php
 
 
 # ============================================================
@@ -392,7 +394,8 @@ RUN mkdir -p \
 
 RUN chown -R www-data:www-data \
     /var/www/html/storage \
-    /var/www/html/bootstrap/cache
+    /var/www/html/bootstrap/cache \
+    /var/www/html/public
 
 RUN chmod -R 775 \
     /var/www/html/storage \
@@ -400,11 +403,10 @@ RUN chmod -R 775 \
 
 
 # ============================================================
-# CLEAR BUILD-TIME LARAVEL CACHE
-# ============================================================
+# LARAVEL OPTIMIZATION
 #
-# This does NOT require APP_KEY.
-# It only removes generated cache files.
+# No config:cache here because runtime environment variables
+# are supplied by Elastic Beanstalk.
 # ============================================================
 
 RUN php artisan optimize:clear
@@ -414,19 +416,18 @@ RUN php artisan optimize:clear
 # FINAL VITE VALIDATION
 # ============================================================
 
-RUN echo "======================================"
-RUN echo "FINAL VITE VALIDATION"
-RUN echo "======================================"
-
 RUN test -d /var/www/html/public/build
 
 RUN test -f /var/www/html/public/build/manifest.json
 
 RUN test ! -f /var/www/html/public/hot
 
-RUN echo "Vite production assets: OK"
-RUN echo "Vite manifest: OK"
-RUN echo "Vite hot file: NOT PRESENT"
+
+# ============================================================
+# NGINX VALIDATION
+# ============================================================
+
+RUN nginx -t
 
 
 # ============================================================
@@ -436,15 +437,7 @@ RUN echo "Vite hot file: NOT PRESENT"
 COPY docker/entrypoint.sh \
     /usr/local/bin/entrypoint.sh
 
-RUN chmod +x \
-    /usr/local/bin/entrypoint.sh
-
-
-# ============================================================
-# NGINX VALIDATION
-# ============================================================
-
-RUN nginx -t
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
 
 # ============================================================

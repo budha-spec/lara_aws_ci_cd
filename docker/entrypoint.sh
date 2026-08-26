@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 set -e
 
@@ -7,31 +7,39 @@ echo "LARAVEL CONTAINER STARTING"
 echo "======================================"
 
 # ------------------------------------------------------------
-# Required environment
+# If Docker is being used for inspection/debugging, do not
+# require Laravel runtime environment variables.
+#
+# Example:
+# docker run --rm --entrypoint sh IMAGE
+# ------------------------------------------------------------
+
+if [ "$#" -gt 0 ] && [ "$1" != "supervisord" ]; then
+    exec "$@"
+fi
+
+
+# ------------------------------------------------------------
+# Runtime environment validation
 # ------------------------------------------------------------
 
 if [ -z "${APP_KEY:-}" ]; then
     echo "ERROR: APP_KEY is missing."
+    echo "APP_KEY must be supplied as a runtime environment variable."
     exit 1
 fi
 
-echo "APP_KEY: PRESENT"
-echo "APP_KEY length: ${#APP_KEY}"
-
 if [ -z "${APP_ENV:-}" ]; then
-    echo "WARNING: APP_ENV is not set."
-else
-    echo "APP_ENV: ${APP_ENV}"
+    export APP_ENV=production
 fi
 
-if [ -z "${APP_URL:-}" ]; then
-    echo "WARNING: APP_URL is not set."
-else
-    echo "APP_URL: ${APP_URL}"
+if [ -z "${APP_DEBUG:-}" ]; then
+    export APP_DEBUG=false
 fi
+
 
 # ------------------------------------------------------------
-# Laravel writable directories
+# Laravel runtime directories
 # ------------------------------------------------------------
 
 mkdir -p \
@@ -41,6 +49,11 @@ mkdir -p \
     /var/www/html/storage/logs \
     /var/www/html/bootstrap/cache
 
+
+# ------------------------------------------------------------
+# Permissions
+# ------------------------------------------------------------
+
 chown -R www-data:www-data \
     /var/www/html/storage \
     /var/www/html/bootstrap/cache
@@ -49,30 +62,31 @@ chmod -R 775 \
     /var/www/html/storage \
     /var/www/html/bootstrap/cache
 
-# ------------------------------------------------------------
-# Clear old Laravel caches
-# ------------------------------------------------------------
 
-echo "Clearing Laravel caches..."
+# ------------------------------------------------------------
+# Clear old runtime cache
+# ------------------------------------------------------------
 
 php artisan optimize:clear
 
-# ------------------------------------------------------------
-# Optional production config cache
-# ------------------------------------------------------------
 
-echo "Caching Laravel configuration..."
+# ------------------------------------------------------------
+# Cache Laravel configuration at RUNTIME
+#
+# This is important because APP_KEY, DB credentials, etc.
+# are available here.
+# ------------------------------------------------------------
 
 php artisan config:cache
 
-echo "Laravel configuration cached."
 
 # ------------------------------------------------------------
-# Start Supervisor
+# Start container command
 # ------------------------------------------------------------
 
-echo "======================================"
-echo "STARTING SUPERVISOR"
+echo "APP_ENV: ${APP_ENV}"
+echo "APP_DEBUG: ${APP_DEBUG}"
+echo "APP_KEY: PRESENT"
 echo "======================================"
 
 exec "$@"
