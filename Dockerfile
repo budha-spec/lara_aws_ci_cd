@@ -51,47 +51,70 @@ WORKDIR /var/www/html
 
 
 # ============================================================
-# SYSTEM PACKAGES
-#
-# Keep the libraries required by GD / INTL / ZIP installed.
-# ============================================================
-
-RUN apk add --no-cache \
-    nginx \
-    supervisor \
-    curl \
-    ca-certificates \
-    bash \
-    tzdata \
-    git \
-    unzip \
-    icu-dev \
-    libzip-dev \
-    zlib-dev \
-    libpng-dev \
-    libjpeg-turbo-dev \
-    freetype-dev \
-    oniguruma-dev \
-    mariadb-connector-c-dev
-
-
-# ============================================================
-# PHP EXTENSIONS
+# SYSTEM PACKAGES + PHP EXTENSIONS
 # ============================================================
 
 RUN set -eux; \
+    apk add --no-cache \
+        nginx \
+        supervisor \
+        bash \
+        curl \
+        ca-certificates \
+        git \
+        unzip \
+        tzdata \
+        libpng \
+        libjpeg-turbo \
+        freetype \
+        icu-libs \
+        libzip \
+        oniguruma \
+        libpq \
+    ; \
+    apk add --no-cache --virtual .build-deps \
+        $PHPIZE_DEPS \
+        libpng-dev \
+        libjpeg-turbo-dev \
+        freetype-dev \
+        icu-dev \
+        libzip-dev \
+        oniguruma-dev \
+        postgresql-dev \
+    ; \
     docker-php-ext-configure gd \
         --with-freetype \
-        --with-jpeg; \
-    \
+        --with-jpeg \
+    ; \
     docker-php-ext-install -j"$(nproc)" \
         pdo_mysql \
+        pdo_pgsql \
         mbstring \
         bcmath \
         gd \
         intl \
         zip \
-        opcache
+        opcache \
+    ; \
+    apk del .build-deps \
+    ; \
+    rm -rf /tmp/*
+
+# ============================================================
+# VERIFY PHP EXTENSIONS
+# ============================================================
+
+RUN set -eux; \
+    php -v; \
+    php -m; \
+    php -m | grep -E '^gd$'; \
+    php -m | grep -E '^intl$'; \
+    php -m | grep -E '^zip$'; \
+    php -m | grep -E '^pdo_mysql$'; \
+    php -m | grep -E '^pdo_pgsql$'; \
+    php -m | grep -E '^mbstring$'; \
+    php -m | grep -E '^bcmath$'; \
+    php -m | grep -E '^Zend OPcache$'
 
 
 # ============================================================
