@@ -60,6 +60,20 @@ jobs:
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Build Docker image
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "======================================"
+          echo "BUILDING DOCKER IMAGE"
+          echo "======================================"
+
+          docker build \
+            --pull \
+            --tag "$IMAGE" \
+            .
+
       - name: Test Docker container
         shell: bash
         env:
@@ -233,13 +247,16 @@ jobs:
           echo "CONTAINER TEST PASSED"
           echo "======================================"
 
-      - name: Create and Push docker image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          pull: true
-          push: true
-          tags: $IMAGE
+      - name: Push Docker image
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "======================================"
+          echo "PUSHING IMAGE"
+          echo "======================================"
+
+          docker push "$IMAGE"
 
       - name: Verify ECR image
         shell: bash
