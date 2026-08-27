@@ -1,36 +1,30 @@
 #!/bin/sh
 
-set -eu
+set -e
 
 echo "======================================"
 echo "LARAVEL CONTAINER STARTING"
 echo "======================================"
 
-if [ -z "${APP_KEY:-}" ]; then
-    echo "ERROR: APP_KEY is missing."
-    exit 1
-fi
+echo "APP_ENV=${APP_ENV}"
+echo "DB_HOST=${DB_HOST}"
+echo "DB_PORT=${DB_PORT}"
+echo "DB_DATABASE=${DB_DATABASE}"
 
-echo "APP_KEY: PRESENT"
-echo "APP_ENV: ${APP_ENV:-not-set}"
+echo "Waiting for RDS..."
 
-# Run migration
-php artisan migrate --force
+until nc -z "$DB_HOST" "$DB_PORT"; do
+    echo "RDS not reachable yet..."
+    sleep 5
+done
 
-# Clear runtime caches
-php artisan optimize:clear
+echo "RDS TCP connection available."
 
-# Cache configuration using runtime environment variables
+php artisan config:clear
 php artisan config:cache
 
-# Cache routes if your application supports it
-php artisan route:cache || true
+php artisan migrate --force
 
-# Cache views
-php artisan view:cache || true
-
-echo "======================================"
-echo "LARAVEL READY"
-echo "======================================"
+echo "Laravel startup complete."
 
 exec "$@"
