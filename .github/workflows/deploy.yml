@@ -6,6 +6,7 @@ on:
       - main
 
 concurrency:
+  group: terraform-production
   cancel-in-progress: true
 
 env:
