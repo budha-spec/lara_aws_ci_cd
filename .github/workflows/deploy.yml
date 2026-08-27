@@ -288,6 +288,32 @@ jobs:
               {
                 "ContainerPort": "80"
               }
+            ],
+            "Environment": [
+              {
+                "Name": "DB_CONNECTION",
+                "Value": "mysql"
+              },
+              {
+                "Name": "DB_HOST",
+                "Value": "${DB_HOST}"
+              },
+              {
+                "Name": "DB_PORT",
+                "Value": "3306"
+              },
+              {
+                "Name": "DB_DATABASE",
+                "Value": "${DB_DATABASE}"
+              },
+              {
+                "Name": "DB_USERNAME",
+                "Value": "${DB_USERNAME}"
+              },
+              {
+                "Name": "DB_PASSWORD",
+                "Value": "${DB_PASSWORD}"
+              }
             ]
           }
           EOF
