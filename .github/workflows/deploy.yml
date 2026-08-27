@@ -102,54 +102,7 @@ jobs:
 
 
       # --------------------------------------------------
-      # CREATE DOCKER COMPOSE FILE
-      # --------------------------------------------------
-
-      - name: Create docker-compose.yml
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cat > docker-compose.yml <<EOF
-          services:
-            laravel:
-              image: ${IMAGE}
-
-              restart: unless-stopped
-
-              ports:
-                - "80:80"
-
-              env_file:
-                - .env
-          EOF
-
-          echo "======================================"
-          echo "docker-compose.yml"
-          echo "======================================"
-
-          cat docker-compose.yml
-
-      # --------------------------------------------------
-      # CREATE DOCKERRUN V3
-      # --------------------------------------------------
-
-      - name: Create Dockerrun.aws.json
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cat > Dockerrun.aws.json <<'EOF'
-          {
-            "AWSEBDockerrunVersion": "3"
-          }
-          EOF
-
-          echo "Dockerrun.aws.json created."
-
-
-      # --------------------------------------------------
-      # CREATE EB APPLICATION BUNDLE
+      # CREATE EB DEPLOYMENT BUNDLE
       # --------------------------------------------------
 
       - name: Create deployment bundle
@@ -159,16 +112,16 @@ jobs:
 
           mkdir -p deploy
 
-          cp docker-compose.yml deploy/
-          cp Dockerrun.aws.json deploy/
+          sed "s|\${IMAGE}|${IMAGE}|g" docker/docker-compose.yml > deploy/docker-compose.yml
 
+          cp docker/Dockerrun.aws.json deploy/Dockerrun.aws.json
+          cat deploy/docker-compose.yml
+          cat deploy/Dockerrun.aws.json
+
+          docker compose -f deploy/docker-compose.yml config
           cd deploy
-
           zip -r ../eb-deploy.zip .
-
           cd ..
-
-          echo "Deployment bundle:"
           unzip -l eb-deploy.zip
 
 

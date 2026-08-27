@@ -1,0 +1,11 @@
+services:
+  laravel:
+    image: ${IMAGE}
+
+    restart: unless-stopped
+
+    ports:
+      - "80:80"
+
+    env_file:
+      - .env
