@@ -112,9 +112,9 @@ jobs:
 
           mkdir -p deploy
 
-          sed "s|\${IMAGE}|${IMAGE}|g" docker/docker-compose.yml > deploy/docker-compose.yml
+          sed "s|\${IMAGE}|${IMAGE}|g" docker-compose.yml > deploy/docker-compose.yml
 
-          cp docker/Dockerrun.aws.json deploy/Dockerrun.aws.json
+          cp Dockerrun.aws.json deploy/Dockerrun.aws.json
           cat deploy/docker-compose.yml
           cat deploy/Dockerrun.aws.json
 
