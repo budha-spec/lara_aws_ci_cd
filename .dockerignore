@@ -16,7 +16,6 @@ storage/framework/sessions/*
 storage/framework/views/*
 
 deployment.zip
-Dockerrun.aws.json
 
 .idea
 .vscode
