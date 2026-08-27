@@ -10,7 +10,6 @@ crash.log
 # Laravel
 /vendor/
 /node_modules/
-.env
 /public/build
 /.phpunit.result.cache
 
