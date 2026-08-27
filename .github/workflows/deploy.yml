@@ -110,10 +110,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          cat > docker-compose.yml <<'EOF'
+          cat > docker-compose.yml <<EOF
           services:
             laravel:
               image: ${IMAGE}
+
               restart: unless-stopped
 
               ports:
@@ -121,22 +122,13 @@ jobs:
 
               env_file:
                 - .env
-
-              environment:
-                APP_ENV: ${APP_ENV}
-                APP_DEBUG: ${APP_DEBUG}
-                APP_KEY: ${APP_KEY}
-
-                DB_CONNECTION: ${DB_CONNECTION}
-                DB_HOST: ${DB_HOST}
-                DB_PORT: ${DB_PORT}
-                DB_DATABASE: ${DB_DATABASE}
-                DB_USERNAME: ${DB_USERNAME}
-                DB_PASSWORD: ${DB_PASSWORD}
           EOF
 
-          echo "docker-compose.yml created."
+          echo "======================================"
+          echo "docker-compose.yml"
+          echo "======================================"
 
+          cat docker-compose.yml
 
       # --------------------------------------------------
       # CREATE DOCKERRUN V3
