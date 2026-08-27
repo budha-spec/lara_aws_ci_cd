@@ -29,6 +29,10 @@ jobs:
       EB_ENVIRONMENT: lara-aws-tf-prod-env
       EB_S3_BUCKET: lara-aws-tf-prod
       IMAGE_TAG: ${{ github.sha }}
+      DB_HOST: ${{ secrets.DB_HOST }}
+      DB_DATABASE: ${{ secrets.DB_DATABASE }}
+      DB_USERNAME: ${{ secrets.DB_USERNAME }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
 
     steps:
 
