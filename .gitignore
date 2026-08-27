@@ -17,5 +17,4 @@ crash.log
 # IDE
 .vscode/
 .idea/
-Dockerrun.aws.json
 deploy.zip
