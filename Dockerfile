@@ -69,7 +69,8 @@ RUN apk add --no-cache \
     icu-libs \
     libzip \
     oniguruma \
-    libpq
+    libpq \
+    netcat-openbsd
 
 
 # ============================================================
