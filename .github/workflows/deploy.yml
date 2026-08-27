@@ -12,8 +12,14 @@ env:
   EB_ENVIRONMENT_NAME: lara-aws-tf-prod-env
 
 jobs:
+
+  terraform:
+    uses: ./.github/workflows/terraform.yml
+    secrets: inherit
+
   deploy:
     runs-on: ubuntu-latest
+    needs: terraform
 
     permissions:
       contents: read
