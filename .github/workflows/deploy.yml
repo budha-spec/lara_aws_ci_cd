@@ -5,6 +5,9 @@ on:
     branches:
       - main
 
+concurrency:
+  cancel-in-progress: false
+
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
   ECR_REPOSITORY: lara-aws-tf-prod-laravel
@@ -19,9 +22,6 @@ env:
   DB_DATABASE: ${{ secrets.DB_DATABASE }}
   DB_USERNAME: ${{ secrets.DB_USERNAME }}
   DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-
-concurrency:
-  cancel-in-progress: true
 
 jobs:
 
