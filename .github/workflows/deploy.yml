@@ -7,21 +7,13 @@ on:
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
+
   ECR_REPOSITORY: lara-aws-tf-prod-laravel
+
   EB_APPLICATION_NAME: lara-aws-tf-prod
   EB_ENVIRONMENT_NAME: lara-aws-tf-prod-env
-  APP_ENV: production
-  APP_DEBUG: "false"
-  APP_KEY: ${{ secrets.APP_KEY }}
-  DB_CONNECTION: mysql
-  DB_HOST: ${{ secrets.DB_HOST }}
-  DB_PORT: "3306"
-  DB_DATABASE: ${{ secrets.DB_DATABASE }}
-  DB_USERNAME: ${{ secrets.DB_USERNAME }}
-  DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
 
 jobs:
-
   terraform:
     uses: ./.github/workflows/terraform.yml
     secrets: inherit
@@ -34,17 +26,8 @@ jobs:
       contents: read
 
     steps:
-      # --------------------------------------------------
-      # CHECKOUT
-      # --------------------------------------------------
-
       - name: Checkout
         uses: actions/checkout@v4
-
-
-      # --------------------------------------------------
-      # AWS CREDENTIALS
-      # --------------------------------------------------
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -53,176 +36,89 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-
-      # --------------------------------------------------
-      # ECR LOGIN
-      # --------------------------------------------------
-
       - name: Login to Amazon ECR
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-
-      # --------------------------------------------------
-      # IMAGE TAG
-      # --------------------------------------------------
-
-      - name: Set image variables
-        shell: bash
+      - name: Set image
         run: |
-          set -euo pipefail
-
           IMAGE_TAG="${GITHUB_SHA}"
-
           IMAGE="${{ steps.ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}"
 
           echo "IMAGE_TAG=${IMAGE_TAG}" >> "$GITHUB_ENV"
           echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
 
-          echo "Image:"
-          echo "${IMAGE}"
-
-
-      # --------------------------------------------------
-      # BUILD DOCKER IMAGE
-      # --------------------------------------------------
-
       - name: Build Docker image
-        shell: bash
         run: |
-          set -euo pipefail
-
           docker build \
             --pull \
-            -t "$IMAGE" \
+            --tag "$IMAGE" \
             .
 
-
-      # --------------------------------------------------
-      # PUSH TO ECR
-      # --------------------------------------------------
-
       - name: Push Docker image
-        shell: bash
         run: |
-          set -euo pipefail
-
           docker push "$IMAGE"
 
-
-      # --------------------------------------------------
-      # CREATE EB DEPLOYMENT BUNDLE
-      # --------------------------------------------------
-
-      - name: Create deployment bundle
-        shell: bash
+      - name: Create Elastic Beanstalk bundle
         run: |
           set -euo pipefail
 
           mkdir -p deploy
 
-          sed "s|\${IMAGE}|${IMAGE}|g" docker-compose.yml > deploy/docker-compose.yml
+          sed "s|\${IMAGE}|${IMAGE}|g" \
+            docker-compose.yml \
+            > deploy/docker-compose.yml
 
-          cp Dockerrun.aws.json deploy/Dockerrun.aws.json
-          cat deploy/docker-compose.yml
-          cat deploy/Dockerrun.aws.json
+          cp Dockerrun.aws.json deploy/
 
-          docker compose -f deploy/docker-compose.yml config
+          docker compose \
+            -f deploy/docker-compose.yml \
+            config
+
           cd deploy
           zip -r ../eb-deploy.zip .
           cd ..
-          unzip -l eb-deploy.zip
-
-
-      # --------------------------------------------------
-      # UPLOAD BUNDLE TO S3
-      # --------------------------------------------------
 
       - name: Upload bundle to S3
-        shell: bash
         run: |
           set -euo pipefail
-
-          VERSION_LABEL="laravel-${GITHUB_SHA}"
-
-          BUCKET=$(aws elasticbeanstalk describe-environments \
-            --application-name "$EB_APPLICATION_NAME" \
-            --environment-names "$EB_ENVIRONMENT_NAME" \
-            --query 'Environments[0].ApplicationName' \
-            --output text)
 
           ACCOUNT_ID=$(aws sts get-caller-identity \
             --query Account \
             --output text)
 
           S3_BUCKET="elasticbeanstalk-${AWS_REGION}-${ACCOUNT_ID}"
+          VERSION_LABEL="laravel-${GITHUB_SHA}"
 
           aws s3 cp \
             eb-deploy.zip \
             "s3://${S3_BUCKET}/${EB_APPLICATION_NAME}/${VERSION_LABEL}.zip"
 
-          echo "VERSION_LABEL=${VERSION_LABEL}" >> "$GITHUB_ENV"
           echo "S3_BUCKET=${S3_BUCKET}" >> "$GITHUB_ENV"
-
-          echo "Uploaded deployment bundle."
-
-
-      # --------------------------------------------------
-      # CREATE EB APPLICATION VERSION
-      # --------------------------------------------------
+          echo "VERSION_LABEL=${VERSION_LABEL}" >> "$GITHUB_ENV"
 
       - name: Create Elastic Beanstalk application version
-        shell: bash
         run: |
-          set -euo pipefail
-
           aws elasticbeanstalk create-application-version \
             --application-name "$EB_APPLICATION_NAME" \
             --version-label "$VERSION_LABEL" \
             --source-bundle \
               S3Bucket="$S3_BUCKET",S3Key="${EB_APPLICATION_NAME}/${VERSION_LABEL}.zip"
 
-          echo "Application version created."
-
-
-      # --------------------------------------------------
-      # DEPLOY
-      # --------------------------------------------------
-
       - name: Deploy to Elastic Beanstalk
-        shell: bash
         run: |
-          set -euo pipefail
-
           aws elasticbeanstalk update-environment \
             --application-name "$EB_APPLICATION_NAME" \
             --environment-name "$EB_ENVIRONMENT_NAME" \
             --version-label "$VERSION_LABEL"
 
-          echo "Deployment started."
-
-
-      # --------------------------------------------------
-      # WAIT
-      # --------------------------------------------------
-
-      - name: Wait for Elastic Beanstalk deployment
-        shell: bash
+      - name: Wait for deployment
         run: |
-          set -euo pipefail
-
           aws elasticbeanstalk wait environment-updated \
             --application-name "$EB_APPLICATION_NAME" \
             --environment-names "$EB_ENVIRONMENT_NAME"
 
-          echo "Elastic Beanstalk deployment completed."
-
-      # --------------------------------------------------
-      # STATUS
-      # --------------------------------------------------
-
       - name: Show deployment status
-        shell: bash
         run: |
           aws elasticbeanstalk describe-environments \
             --application-name "$EB_APPLICATION_NAME" \

@@ -1,5 +1,5 @@
 # ============================================================
-# STAGE 1: VITE
+# VITE BUILD
 # ============================================================
 
 FROM node:22-alpine AS frontend
@@ -14,16 +14,12 @@ COPY resources ./resources
 COPY public ./public
 COPY vite.config.js ./
 
-ENV NODE_ENV=production
-
-RUN rm -f public/hot \
-    && npm run build \
-    && test -f public/build/manifest.json \
-    && test ! -f public/hot
+RUN npm run build \
+    && test -f public/build/manifest.json
 
 
 # ============================================================
-# STAGE 2: COMPOSER
+# COMPOSER DEPENDENCIES
 # ============================================================
 
 FROM composer:2 AS composer
@@ -42,7 +38,7 @@ RUN composer install \
 
 
 # ============================================================
-# STAGE 3: PHP APPLICATION
+# APPLICATION
 # ============================================================
 
 FROM php:8.3-fpm-alpine
@@ -51,30 +47,24 @@ WORKDIR /var/www/html
 
 
 # ============================================================
-# SYSTEM RUNTIME PACKAGES
+# RUNTIME PACKAGES
 # ============================================================
 
 RUN apk add --no-cache \
     nginx \
     supervisor \
     bash \
-    curl \
-    ca-certificates \
-    git \
-    unzip \
     tzdata \
     libpng \
     libjpeg-turbo \
     freetype \
     icu-libs \
     libzip \
-    oniguruma \
-    libpq \
-    netcat-openbsd
+    oniguruma
 
 
 # ============================================================
-# PHP EXTENSION BUILD DEPENDENCIES
+# PHP EXTENSIONS
 # ============================================================
 
 RUN apk add --no-cache --virtual .build-deps \
@@ -85,48 +75,28 @@ RUN apk add --no-cache --virtual .build-deps \
     icu-dev \
     libzip-dev \
     oniguruma-dev \
-    postgresql-dev
-
-
-# ============================================================
-# PHP EXTENSIONS
-# ============================================================
-
-RUN set -eux; \
-    docker-php-ext-configure gd \
-        --with-freetype \
-        --with-jpeg; \
-    docker-php-ext-install -j"$(nproc)" \
-        pdo_mysql \
-        pdo_pgsql \
-        mbstring \
-        bcmath \
-        gd \
-        intl \
-        zip \
-        opcache
-
-
-# ============================================================
-# REMOVE BUILD DEPENDENCIES
-# ============================================================
-
-RUN apk del .build-deps \
-    && rm -rf /tmp/*
-
-
-# ============================================================
-# PHP PRODUCTION CONFIG
-# ============================================================
-
-RUN mv \
-    "$PHP_INI_DIR/php.ini-production" \
-    "$PHP_INI_DIR/php.ini"
+  && docker-php-ext-configure gd \
+    --with-freetype \
+    --with-jpeg \
+  && docker-php-ext-install -j"$(nproc)" \
+    pdo_mysql \
+    mbstring \
+    bcmath \
+    gd \
+    intl \
+    zip \
+    opcache \
+  && apk del .build-deps \
+  && rm -rf /tmp/*
 
 
 # ============================================================
 # PHP CONFIGURATION
 # ============================================================
+
+RUN mv \
+    "$PHP_INI_DIR/php.ini-production" \
+    "$PHP_INI_DIR/php.ini"
 
 RUN cat > /usr/local/etc/php/conf.d/99-production.ini <<'EOF'
 expose_php=Off
@@ -142,7 +112,6 @@ max_input_time=300
 opcache.enable=1
 opcache.enable_cli=1
 opcache.validate_timestamps=0
-opcache.revalidate_freq=0
 opcache.memory_consumption=128
 opcache.interned_strings_buffer=16
 opcache.max_accelerated_files=20000
@@ -154,44 +123,20 @@ EOF
 # ============================================================
 
 RUN sed -i \
-    's|^listen = 9000|listen = 127.0.0.1:9000|' \
-    /usr/local/etc/php-fpm.d/www.conf
-
-RUN sed -i \
-    's|^;clear_env = no|clear_env = no|' \
-    /usr/local/etc/php-fpm.d/www.conf
-
-RUN sed -i \
-    's|^clear_env = yes|clear_env = no|' \
+    -e 's|^listen = 9000|listen = 127.0.0.1:9000|' \
+    -e 's|^;clear_env = no|clear_env = no|' \
+    -e 's|^clear_env = yes|clear_env = no|' \
     /usr/local/etc/php-fpm.d/www.conf
 
 
 # ============================================================
-# PHP-FPM ENVIRONMENT
-# ============================================================
-
-RUN sed -i \
-    's|^;clear_env = no|clear_env = no|' \
-    /usr/local/etc/php-fpm.d/www.conf
-
-RUN sed -i \
-    's|^clear_env = yes|clear_env = no|' \
-    /usr/local/etc/php-fpm.d/www.conf
-
-
-# ============================================================
-# NGINX DIRECTORIES
+# NGINX
 # ============================================================
 
 RUN mkdir -p \
     /run/nginx \
     /var/cache/nginx \
     /var/log/nginx
-
-
-# ============================================================
-# NGINX CONFIG
-# ============================================================
 
 RUN rm -f /etc/nginx/http.d/default.conf
 
@@ -213,41 +158,13 @@ COPY docker/supervisor/supervisord.conf \
 
 COPY . .
 
-
-# ============================================================
-# REMOVE BUILD-TIME LARAVEL CACHE
-# ============================================================
-
-RUN rm -f \
-    bootstrap/cache/config.php \
-    bootstrap/cache/packages.php \
-    bootstrap/cache/services.php
-
-
-# ============================================================
-# COMPOSER VENDOR
-# ============================================================
-
 COPY --from=composer \
     /app/vendor \
     /var/www/html/vendor
 
-
-# ============================================================
-# VITE BUILD
-# ============================================================
-
 COPY --from=frontend \
     /app/public/build \
     /var/www/html/public/build
-
-
-# ============================================================
-# REMOVE VITE HOT FILE
-# ============================================================
-
-RUN rm -f \
-    /var/www/html/public/hot
 
 
 # ============================================================
@@ -269,52 +186,10 @@ RUN mkdir -p \
 RUN chown -R www-data:www-data \
     storage \
     bootstrap/cache \
-    public
-
-RUN chmod -R 775 \
+    public \
+  && chmod -R 775 \
     storage \
     bootstrap/cache
-
-
-# ============================================================
-# LARAVEL CACHE
-# ============================================================
-
-RUN php artisan optimize:clear
-
-
-# ============================================================
-# PHP VALIDATION
-# ============================================================
-
-RUN php -v
-
-RUN php -m
-
-
-# ============================================================
-# APPLICATION VALIDATION
-# ============================================================
-
-RUN test -f public/index.php
-
-RUN test -f public/build/manifest.json
-
-RUN test ! -f public/hot
-
-
-# ============================================================
-# NGINX VALIDATION
-# ============================================================
-
-RUN nginx -t
-
-
-# ============================================================
-# PHP-FPM VALIDATION
-# ============================================================
-
-RUN php-fpm -t
 
 
 # ============================================================
@@ -324,8 +199,7 @@ RUN php-fpm -t
 COPY docker/entrypoint.sh \
     /usr/local/bin/entrypoint.sh
 
-RUN chmod +x \
-    /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
 
 # ============================================================
@@ -338,18 +212,8 @@ RUN rm -rf \
     /root/.composer
 
 
-# ============================================================
-# PORT
-# ============================================================
-
 EXPOSE 80
-
-
-# ============================================================
-# START
-# ============================================================
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 
 CMD ["supervisord", "-c", "/etc/supervisord.conf"]
-
